@@ -22,9 +22,9 @@ private:
         Mat R = qr.matrixQR().topRows(k).template triangularView<Eigen::Upper>();
 
         // Undo column pivoting so that Q * R == A (not A * P)
-        R = R * qr.colsPermutation().inverse();
+        R.applyOnTheRight(qr.colsPermutation().inverse());
 
-        return {Q, R};
+        return {std::move(Q), std::move(R)};
     }
 
     static std::array<Mat, 2> mat_qr_t(Mat const& A)

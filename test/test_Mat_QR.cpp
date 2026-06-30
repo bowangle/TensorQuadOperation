@@ -4,8 +4,13 @@
 #include <complex>
 #include <cassert>
 #include <random>
+#include <chrono>
 #include "mat_decomp.h"
 #include <boost/multiprecision/float128.hpp>
+#include <boost/random.hpp>
+#include <boost/random/uniform_real_distribution.hpp>
+#include <iostream>
+#include <limits>
 
 using float128 = boost::multiprecision::float128;
 using Cfloat128 = std::complex<float128>;
@@ -17,13 +22,11 @@ using Matrix =
 static Matrix randomMatrix(int rows, int cols, unsigned seed)
 {
     Matrix A(rows, cols);
-    std::mt19937_64 gen(seed);
-    std::uniform_real_distribution<double> dist(-1.0, 1.0);
-
+    boost::random::mt19937_64 gen(seed);
+    boost::random::uniform_real_distribution<float128> dist(-1, 1);
     for (int i = 0; i < rows; ++i)
         for (int j = 0; j < cols; ++j)
-            A(i, j) = Cfloat128(Real(dist(gen)), Real(dist(gen)));
-
+            A(i, j) = Cfloat128(dist(gen), dist(gen));
     return A;
 }
 
@@ -36,38 +39,55 @@ static void runTest(Matrix const& A, std::string const& label)
 
     // TEST: LEFT ORTHOGONAL (A = Q R)
     {
+        auto t0 = std::chrono::steady_clock::now();
         auto [Q, R] = qr(A, true);
+        auto t1 = std::chrono::steady_clock::now();
+
         Matrix A_rec = Q * R;
         Real err = 0;
         for (int i = 0; i < M; ++i)
             for (int j = 0; j < N; ++j)
             {
                 auto d = A(i, j) - A_rec(i, j);
-                err += std::norm(d);
+                err += std::abs(d);
             }
-        std::cout << "[" << label << "][LEFT] reconstruction error = " << err << "\n";
-        assert(err < Real("1e-30"));
+        Real err2 = (A - A_rec).norm() / A.norm();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        std::cout << "[" << label << "][LEFT] reconstruction error = " << err
+                   << " relative error = " << err2
+                   << " time = " << ms << " ms\n";
+        assert(err2 < Real("1e-30"));
     }
 
     // TEST: RIGHT ORTHOGONAL (A = R Q)
     {
+        auto t0 = std::chrono::steady_clock::now();
         auto [R, Q] = qr(A, false);
+        auto t1 = std::chrono::steady_clock::now();
+
         Matrix A_rec = R * Q;
         Real err = 0;
         for (int i = 0; i < M; ++i)
             for (int j = 0; j < N; ++j)
             {
                 auto d = A(i, j) - A_rec(i, j);
-                err += std::norm(d);
+                err += std::abs(d);
             }
-        std::cout << "[" << label << "][RIGHT] reconstruction error = " << err << "\n";
-        assert(err < Real("1e-30"));
+        Real err2 = (A - A_rec).norm() / A.norm();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        std::cout << "[" << label << "][RIGHT] reconstruction abs error = " << err
+                   << " relative error = " << err2
+                   << " time = " << ms << " ms\n";
+        assert(err2 < Real("1e-30"));
     }
 }
 
 // ================= TEST =================
 int main()
 {
+    std::cout << "std epsilon:   " << std::numeric_limits<float128>::epsilon() << "\n";
+    std::cout << "Eigen epsilon: " << Eigen::NumTraits<float128>::epsilon() << "\n";
+
     constexpr int M = 20;
     constexpr int N = 5;
 
@@ -86,6 +106,12 @@ int main()
     // Random wide matrix too, to exercise the rows < cols path directly
     Matrix R2 = randomMatrix(N, M, 1337);
     runTest(R2, "RANDOM (wide)");
+
+    // Big random matrix, to stress accumulation/timing at scale
+    constexpr int BIG_M = 200;
+    constexpr int BIG_N = 80;
+    Matrix R3 = randomMatrix(BIG_M, BIG_N, 7);
+    runTest(R3, "RANDOM (big)");
 
     std::cout << "MatQR TEST PASSED\n";
     return 0;
