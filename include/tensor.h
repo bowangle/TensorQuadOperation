@@ -28,22 +28,22 @@ struct Tensor3D {
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     using Stride_dim = Eigen::Stride<Eigen::Dynamic,Eigen::Dynamic>;
     public:
-        size_t n_left, n_phys, n_right;    // 99% of the time n_cols=2
+        Eigen::Index n_left, n_phys, n_right;    // 99% of the time n_cols=2
         std::vector<T> data;                // in this format, we want the ordering [left, physical, right]
 
-        [[nodiscard]] inline size_t idx(size_t id_left, size_t id_phys, size_t id_right) const {
+        [[nodiscard]] inline Eigen::Index idx(Eigen::Index id_left, Eigen::Index id_phys, Eigen::Index id_right) const {
             return id_right*n_left*n_phys + id_phys*n_left + id_left;
         }
 
-        T& operator()(size_t id_left, size_t id_phys, size_t id_right) {
+        T& operator()(Eigen::Index id_left, Eigen::Index id_phys, Eigen::Index id_right) {
             return data[idx(id_left,id_phys,id_right)];
         }
 
-        const T& operator()(size_t id_left, size_t id_phys, size_t id_right) const {
+        const T& operator()(Eigen::Index id_left, Eigen::Index id_phys, Eigen::Index id_right) const {
             return data[idx(id_left,id_phys,id_right)];
         }
 
-        Tensor3D(size_t r, size_t c, size_t s) : n_left(r), n_phys(c), n_right(s), data(r * c * s) {}
+        Tensor3D(Eigen::Index r, Eigen::Index c, Eigen::Index s) : n_left(r), n_phys(c), n_right(s), data(r * c * s) {}
 
         // ===========================================================
         //                  TENSOR MANIPULATION: SLICE VIEW
@@ -51,7 +51,7 @@ struct Tensor3D {
 
         // =================VIEW OF TENSOR============================
         // right view mutable
-        Eigen::Map<MatrixX> right(size_t id_right) {
+        Eigen::Map<MatrixX> right(Eigen::Index id_right) {
             return Eigen::Map<MatrixX>(
                 data.data() + id_right * n_left * n_phys,
                 n_left,
@@ -60,7 +60,7 @@ struct Tensor3D {
         }
         
         // right view const
-        Eigen::Map<const MatrixX> right_const(size_t id_right) const{
+        Eigen::Map<const MatrixX> right_const(Eigen::Index id_right) const{
             return {
                 data.data() + id_right * n_left * n_phys,
                 n_left,
@@ -69,7 +69,7 @@ struct Tensor3D {
         }
 
         // phys view mutable
-        Eigen::Map<MatrixX,0,Stride_dim> phys(size_t id_phys)
+        Eigen::Map<MatrixX,0,Stride_dim> phys(Eigen::Index id_phys)
         {
             return {
                 data.data() + id_phys*n_left,
@@ -80,7 +80,7 @@ struct Tensor3D {
         }
 
         // phys view const
-        Eigen::Map<const MatrixX,0,Stride_dim> phys_const(size_t id_phys) const{
+        Eigen::Map<const MatrixX,0,Stride_dim> phys_const(Eigen::Index id_phys) const{
             return {
                 data.data() + id_phys * n_left,
                 n_left,
@@ -90,7 +90,7 @@ struct Tensor3D {
         }
 
         // left view mutable
-        Eigen::Map<MatrixX,0,Stride_dim> left(size_t id_left){
+        Eigen::Map<MatrixX,0,Stride_dim> left(Eigen::Index id_left){
             return {
                 data.data() + id_left,
                 n_phys,
@@ -100,7 +100,7 @@ struct Tensor3D {
         }
 
         // left view const
-        Eigen::Map<const MatrixX,0,Stride_dim> left_const(size_t id_left) const{
+        Eigen::Map<const MatrixX,0,Stride_dim> left_const(Eigen::Index id_left) const{
             return {
                 data.data() + id_left,
                 n_phys,
@@ -112,26 +112,26 @@ struct Tensor3D {
         // =================COPY OF TENSOR============================
         // make copy of slice of the tensor
 
-        MatrixX phys_copy(size_t id_phys) {
+        MatrixX phys_copy(Eigen::Index id_phys) {
             MatrixX out(n_left, n_right);
-            for (size_t id_left = 0; id_left < n_left; ++id_left)
-                for (size_t id_right = 0; id_right < n_right; ++id_right)
+            for (Eigen::Index id_left = 0; id_left < n_left; ++id_left)
+                for (Eigen::Index id_right = 0; id_right < n_right; ++id_right)
                     out(id_left, id_right) = data[idx(id_left, id_phys, id_right)];
             return out;
         }
 
-        MatrixX right_copy(size_t id_right) {
+        MatrixX right_copy(Eigen::Index id_right) {
             MatrixX out(n_left, n_phys);
-            for (size_t id_left = 0; id_left < n_left; ++id_left)
-                for (size_t id_phys = 0; id_phys < n_phys; ++id_phys)
+            for (Eigen::Index id_left = 0; id_left < n_left; ++id_left)
+                for (Eigen::Index id_phys = 0; id_phys < n_phys; ++id_phys)
                     out(id_left, id_phys) = data[idx(id_left, id_phys, id_right)];
             return out;
         }
 
-        MatrixX left_copy(size_t id_left) {
+        MatrixX left_copy(Eigen::Index id_left) {
             MatrixX out(n_phys, n_right);
-            for (size_t id_phys = 0; id_phys < n_phys; ++id_phys)
-                for (size_t id_right = 0; id_right < n_right; ++id_right)
+            for (Eigen::Index id_phys = 0; id_phys < n_phys; ++id_phys)
+                for (Eigen::Index id_right = 0; id_right < n_right; ++id_right)
                     out(id_phys, id_right) = data[idx(id_left, id_phys, id_right)];
             return out;
         }
@@ -181,9 +181,9 @@ struct Tensor3D {
                 // (left*phys, right)
                 MatrixX out(n_left * n_phys, n_right);
 
-                for (size_t r = 0; r < n_right; ++r)
-                    for (size_t p = 0; p < n_phys; ++p)
-                        for (size_t l = 0; l < n_left; ++l)
+                for (Eigen::Index r = 0; r < n_right; ++r)
+                    for (Eigen::Index p = 0; p < n_phys; ++p)
+                        for (Eigen::Index l = 0; l < n_left; ++l)
                             out(l + p * n_left, r) = (*this)(l, p, r);
 
                 return out;
@@ -209,13 +209,13 @@ template<typename T>
 std::vector<Tensor3D<T>> load_vector_tensor(std::istream& in)
 {
     using RealT = typename T::value_type;
-    size_t nBit;
+    Eigen::Index nBit;
     in >> nBit;
 
     std::vector<Tensor3D<T>> Xs;
     Xs.reserve(nBit);
 
-    for (size_t t = 0; t < nBit; ++t)
+    for (Eigen::Index t = 0; t < nBit; ++t)
     {
         std::string header;
         in >> header;
@@ -223,15 +223,15 @@ std::vector<Tensor3D<T>> load_vector_tensor(std::istream& in)
         if (header != "ARMA_CUB_TXT_FC016")
             throw std::runtime_error("Bad header");
 
-        size_t r, c, s;
+        Eigen::Index r, c, s;
         in >> r >> c >> s;
         Tensor3D<T> X(r, c, s);
 
-        for (size_t id_left = 0; id_left < X.n_left; ++id_left)
+        for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
         {
-            for (size_t id_phys = 0; id_phys < X.n_phys; ++id_phys)
+            for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
             {
-                for (size_t id_right = 0; id_right < X.n_right; ++id_right)
+                for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
                 {
                     std::string token;
                     in >> token; // "(re,im)"
@@ -281,7 +281,7 @@ void save_Tensor3D_to_arma(
     using RealT = typename T::value_type;
     out << Xs.size() << "\n";
 
-    for (size_t t = 0; t < Xs.size(); ++t)
+    for (Eigen::Index t = 0; t < Xs.size(); ++t)
     {
         out << "ARMA_CUB_TXT_FC016\n";
 
@@ -294,11 +294,11 @@ void save_Tensor3D_to_arma(
         out << std::scientific;
         out << std::setprecision(std::numeric_limits<RealT>::digits10 + 5);
 
-        for (size_t id_left = 0; id_left < X.n_left; ++id_left)
+        for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
         {
-            for (size_t id_phys = 0; id_phys < X.n_phys; ++id_phys)
+            for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
             {
-                for (size_t id_right = 0; id_right < X.n_right; ++id_right)
+                for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
                 {
                     const auto& z = X(id_left, id_phys, id_right);
 
@@ -333,15 +333,15 @@ std::ostream& operator<<(std::ostream& os, const Tensor3D<T>& X)
 {
     os << "[" << X.n_left << " " << X.n_phys << " " << X.n_right << "]\n\n";
 
-    for (size_t id_left = 0; id_left < X.n_left; ++id_left)
+    for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
     {
         os << "[ ";   // slice start
 
-        for (size_t id_phys = 0; id_phys < X.n_phys; ++id_phys)
+        for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
         {
             os << "[ ";
 
-            for (size_t id_right = 0; id_right < X.n_right; ++id_right)
+            for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
                 os << "(" << X(id_left,id_phys,id_right).real() << "," << X(id_left,id_phys,id_right).imag() << ") ";
 
             os << "]\n";
@@ -373,11 +373,11 @@ std::ostream& operator<<(std::ostream& out,
         out << std::scientific;
         out << std::setprecision(std::numeric_limits<RealT>::digits10 + 5);
 
-        for (size_t id_left = 0; id_left < X.n_left; ++id_left)
+        for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
         {
-            for (size_t id_phys = 0; id_phys < X.n_phys; ++id_phys)
+            for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
             {
-                for (size_t id_right = 0; id_right < X.n_right; ++id_right)
+                for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
                 {
                     const auto& z = X(id_left, id_phys, id_right);
 

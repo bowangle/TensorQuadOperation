@@ -17,6 +17,10 @@ add_executable(Test_Tensor3D
     test/test_Tensor3D.cpp
 )
 
+add_executable(Test_Mat_QR
+    test/test_Mat_QR.cpp
+)
+
 target_include_directories(Test1 PUBLIC
     ${PROJECT_INCLUDE_DIR}
     ${EIGEN_INCLUDE_DIR}
@@ -27,5 +31,11 @@ target_include_directories(Test_Tensor3D PUBLIC
     ${EIGEN_INCLUDE_DIR}
 )
 
+target_include_directories(Test_Mat_QR PUBLIC
+    ${PROJECT_INCLUDE_DIR}
+    ${EIGEN_INCLUDE_DIR}
+)
+
 target_link_libraries(Test1 PRIVATE quadmath)
 target_link_libraries(Test_Tensor3D PRIVATE quadmath)
+target_link_libraries(Test_Mat_QR PRIVATE quadmath)
