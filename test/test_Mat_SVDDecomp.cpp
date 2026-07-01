@@ -1,4 +1,6 @@
 #include "type_double_double.h"
+#include "type_float128_boost.h"
+#include "mat_decomp.h"
 #include <Eigen/Dense>
 #include <array>
 #include <iostream>
@@ -9,7 +11,6 @@
 #include <complex>
 #include <vector>
 #include <cmath>
-#include "mat_decomp.h"
 #include <boost/multiprecision/float128.hpp>
 #include <boost/random.hpp>
 #include <boost/random/uniform_real_distribution.hpp>

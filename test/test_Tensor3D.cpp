@@ -1,5 +1,6 @@
 #include "tensor.h"
 #include "tt_base.h"
+#include "type_float128_boost.h"
 #include <iostream>
 #include <complex>
 
