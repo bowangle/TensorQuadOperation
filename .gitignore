@@ -1,4 +1,6 @@
 extern/eigen/
 extern/pybind11/
+extern/qd/
+extern/qd-install/
 build/
 
