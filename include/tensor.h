@@ -37,6 +37,40 @@ struct Tensor3D {
         //                  TENSOR MANIPULATION: SLICE VIEW
         // ===========================================================
 
+        // B(left*phys, right) = A(left, phys, right)  — analogous to cube_as_matrix2
+        Eigen::Map<MatrixX> flatten_as_matrix2() {
+            return Eigen::Map<MatrixX>(
+                data.data(),
+                n_left * n_phys,   // rows: merge left and phys
+                n_right            // cols: right stays
+            );
+        }
+
+        Eigen::Map<const MatrixX> flatten_as_matrix2_const() const {
+            return Eigen::Map<const MatrixX>(
+                data.data(),
+                n_left * n_phys,
+                n_right
+            );
+        }
+
+        // B(left, phys*right) = A(left, phys, right)  — analogous to cube_as_matrix1
+        Eigen::Map<MatrixX> flatten_as_matrix1() {
+            return Eigen::Map<MatrixX>(
+                data.data(),
+                n_left,            // rows: left stays
+                n_phys * n_right   // cols: merge phys and right
+            );
+        }
+
+        Eigen::Map<const MatrixX> flatten_as_matrix1_const() const {
+            return Eigen::Map<const MatrixX>(
+                data.data(),
+                n_left,
+                n_phys * n_right
+            );
+        }
+
         // =================VIEW OF TENSOR============================
         // right view mutable
         Eigen::Map<MatrixX> right(Eigen::Index id_right) {
