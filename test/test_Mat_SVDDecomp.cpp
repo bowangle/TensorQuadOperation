@@ -327,8 +327,8 @@ int main()
     // comment out just that line to isolate it, and report the error.
     runAll<double>("double");
     runAll<std::complex<double>>("complex double");
-    runAll<dd_real>("double double");
-    runAll<std::complex<dd_real>>("complex double double");
+    runAll<dd_128>("double double");
+    runAll<Cdd_128>("complex double double");
     runAll<float128>("float128");
     runAll<Cfloat128>("Cfloat128");
 

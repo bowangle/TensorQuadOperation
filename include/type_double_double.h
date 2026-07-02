@@ -42,6 +42,9 @@
 #include <type_traits>
 #include <cstddef>
 
+using dd_128 = dd_real;
+using Cdd_128 = std::complex<dd_128>;
+
 // ============================================================
 // 0. SAFE SCALAR CONVERSION HELPERS
 // ------------------------------------------------------------
@@ -107,6 +110,8 @@ struct NumTraits<dd_real> : GenericNumTraits<dd_real> {
     static int max_digits10()     { return 33; }
 };
 }
+
+
 
 // ------------------------------------------------------------
 // (Removed) boost::is_floating_point<dd_real> specialization.

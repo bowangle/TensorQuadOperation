@@ -193,6 +193,17 @@ struct Tensor3D {
 //              Save load Tensor3D
 // =================================================
 
+template<typename RealT>
+RealT parse_real(const std::string& s)
+{
+    RealT val;
+    std::istringstream iss(s);
+    iss >> val;
+    if (iss.fail())
+        throw std::runtime_error("Failed to parse: " + s);
+    return val;
+}
+
 template<typename T>
 std::vector<Tensor3D<T>> load_vector_tensor(std::istream& in)
 {
@@ -235,8 +246,8 @@ std::vector<Tensor3D<T>> load_vector_tensor(std::istream& in)
                     if (comma == std::string::npos)
                         throw std::runtime_error("Missing comma in complex");
 
-                    RealT re(token.substr(0, comma));
-                    RealT im(token.substr(comma + 1));
+                    RealT re = parse_real<RealT>(token.substr(0, comma));
+                    RealT im = parse_real<RealT>(token.substr(comma + 1));
 
                     X(id_left, id_phys, id_right) = T(re, im);
                 }
@@ -302,7 +313,6 @@ void save_Tensor3D_to_arma(
     }
 }
 
-// TODO
 template<typename T>
 void save_Tensor3D_to_arma(std::vector<Tensor3D<T>> cores, const std::string& filename)
 {
@@ -341,7 +351,7 @@ std::ostream& operator<<(std::ostream& os, const Tensor3D<T>& X)
     return os;
 }
 
-// TODO
+
 template<typename T>
 std::ostream& operator<<(std::ostream& out,
                          const std::vector<Tensor3D<T>>& Xs)
