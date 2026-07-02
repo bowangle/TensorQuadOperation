@@ -69,6 +69,20 @@ class TT{
         return max_chi;
     }
 
+    T eval(std::vector<int> const& id) const
+    {
+        if (static_cast<int>(id.size()) != nBit)
+            throw std::invalid_argument("TT::eval: id.size() != nBit");
+
+        // start with 1x1 identity
+        MatrixX prod = MatrixX::Identity(1, 1);
+
+        for (int k = 0; k < nBit; k++)
+            prod = prod * core[k].phys_const(id[k]);  // (1 x n_left) * (n_left x n_right)
+
+        return prod(0, 0);
+    }
+
     // =============================================================
     //                      TT Canonicalisation:
     // =============================================================
@@ -242,4 +256,33 @@ class TT{
         }
     }
 
+    // =============================================================
+    //                      TT misc:
+    // =============================================================
+
+    // Generate n_point random evaluation points, each of size nBit
+    // with each index in [0, n_phys-1]
+    std::vector<std::vector<int>> generate_points(int n_point) const
+    {
+        std::mt19937 rng(std::random_device{}());
+
+        std::vector<std::vector<int>> points(n_point, std::vector<int>(nBit));
+        for (auto& pt : points)
+            for (int k = 0; k < nBit; k++)
+            {
+                std::uniform_int_distribution<int> dist(0, core[k].n_phys - 1);
+                pt[k] = dist(rng);
+            }
+        return points;
+    }
+
+    // Evaluate the TT at a list of points
+    std::vector<T> eval_list(std::vector<std::vector<int>> const& points) const
+    {
+        std::vector<T> results;
+        results.reserve(points.size());
+        for (auto const& pt : points)
+            results.push_back(eval(pt));
+        return results;
+    } 
 };

@@ -55,8 +55,8 @@ struct SVDDecomp {
         : leftOrthogonal(leftOrthogonal_)
     {
         // JacobiSVD works with boost::multiprecision scalars; BDCSVD does not reliably.
-        Eigen::BDCSVD<Mat, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(M);
-        //Eigen::JacobiSVD<Mat> svd(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
+        //Eigen::BDCSVD<Mat, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(M);
+        Eigen::JacobiSVD<Mat> svd(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
         U = svd.matrixU();
         V = svd.matrixV();          // M = U * diag(s) * V^H
         s = svd.singularValues();
