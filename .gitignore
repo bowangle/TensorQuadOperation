@@ -5,3 +5,6 @@ build/
 # ccache
 ccache-*/
 *.tar.xz
+
+# ignore test output
+test/test_*.txt
