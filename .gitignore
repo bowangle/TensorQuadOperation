@@ -1,6 +1,7 @@
 # External dependencies
 
 build/
+extern/qd-install/
 
 # ccache
 ccache-*/
