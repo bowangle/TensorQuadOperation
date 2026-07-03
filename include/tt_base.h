@@ -13,30 +13,38 @@ template<typename T>
 class TT{
     using VecTT = std::vector<Tensor3D<T>>;
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+    using RealScalar = typename Eigen::NumTraits<T>::Real;
 
     private:
     int nBit;                   // number of tensor
     VecTT core;                 // list of tensor
     int w;                      // working tensor, -1 for no defined (None)
+    int max_bond_dim_param;
+    float a;
 
     public:
     // =============================================================
     //                      TT constructor:
     // =============================================================
     // from core
-    TT(VecTT core_){
-        core = core_;
-        nBit = core_.size();
-        w = -1;
-    }
+    TT(VecTT core_, int max_bond_dim_=0)
+    :
+        core(std::move(core_)),
+        nBit(core.size()),
+        w(-1),
+        max_bond_dim_param(max_bond_dim_),
+        a(-1)
+    {}
 
     // from file
-    TT(const std::string& filename)
-    {
-        core = load_vector_tensor<T>(filename);
-        nBit = core.size();
-        w = -1;
-    }
+    TT(const std::string& filename, int max_bond_dim_=0)
+    :
+        core(std::move(load_vector_tensor<T>(filename))),
+        nBit(core.size()),
+        w(-1),
+        max_bond_dim_param(max_bond_dim_),
+        a(-1)
+    {}
 
     // =============================================================
     //                      TT access:

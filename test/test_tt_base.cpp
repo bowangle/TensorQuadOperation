@@ -324,8 +324,9 @@ int main()
     auto t_total = now();
 
     test_tt<std::complex<double>>("complex<double>", file, n_points);
-    test_tt<Cdd_128>             ("Cdd_128",         file, n_points);
     test_tt<Cfloat128>           ("Cfloat128",       file, n_points);
+    test_tt<Cdd_128>             ("Cdd_128",         file, n_points);
+    
 
     std::cout << "\n========================================\n";
     std::cout << "Total time (all types): " << elapsed_ms(t_total) << " ms\n";
