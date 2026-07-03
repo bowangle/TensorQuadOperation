@@ -57,6 +57,11 @@ class TT{
     //                      TT access:
     // =============================================================
 
+    const VecTT& get_core() const { return core; }
+    int get_w() const { return w; }
+    int get_max_bond_dim() const { return max_bond_dim_param; }
+    RealScalar get_reltol() const { return reltol_param; }
+
     int get_size(){
         return nBit;
     }
