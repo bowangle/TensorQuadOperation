@@ -322,7 +322,7 @@ void save_Tensor3D_to_arma(
 
         out << X.n_left << " "
             << X.n_phys << " "
-            << X.n_rigth << "\n";
+            << X.n_right << "\n";
 
         out << std::scientific;
         out << std::setprecision(std::numeric_limits<RealT>::digits10 + 5);
@@ -396,9 +396,9 @@ std::ostream& operator<<(std::ostream& out,
     {
         out << "ARMA_CUB_TXT_FC016\n";
 
-        out << X.n_rows << " "
-            << X.n_cols << " "
-            << X.n_slices << "\n";
+        out << X.n_left << " "
+            << X.n_phys << " "
+            << X.n_right << "\n";
 
         using RealT = typename T::value_type;
 

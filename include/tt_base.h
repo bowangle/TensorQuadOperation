@@ -1,5 +1,8 @@
 #pragma once
 
+#include <random>
+#include <stdexcept>
+#include <tuple>
 #include <vector>
 #include <iostream>
 #include <functional>  // for std::function
@@ -15,36 +18,40 @@ class TT{
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     using RealScalar = typename Eigen::NumTraits<T>::Real;
 
-    private:
+    protected:
     VecTT core;                 // list of tensor
     int nBit;                   // number of tensor
     int w;                      // working tensor, -1 for no defined (None)
     int max_bond_dim_param;
-    RealScalar a;
+    RealScalar reltol_param;
 
     public:
     // =============================================================
     //                      TT constructor:
     // =============================================================
     // from core
-    TT(VecTT core_, int max_bond_dim_=0)
+    TT(VecTT core_, int max_bond_dim_=0, RealScalar reltol_=-1, int w_=0)
     :
         core(std::move(core_)),
         nBit(core.size()),
         w(-1),
         max_bond_dim_param(max_bond_dim_),
-        a(-1)
-    {}
+        reltol_param(reltol_)
+    {
+        _initialize_w(w_);
+    }
 
     // from file
-    TT(const std::string& filename, int max_bond_dim_=0)
+    TT(const std::string& filename, int max_bond_dim_=0, RealScalar reltol_=-1, int w_=0)
     :
         core(std::move(load_vector_tensor<T>(filename))),
         nBit(core.size()),
         w(-1),
         max_bond_dim_param(max_bond_dim_),
-        a(-1)
-    {}
+        reltol_param(reltol_)
+    {
+        _initialize_w(w_);
+    }
 
     // =============================================================
     //                      TT access:
@@ -155,66 +162,96 @@ class TT{
             shift_w(old_w);
         }
 
-    void _left_canonify_k(int k)
+    void _left_canonify_k(int k, bool compress = false)
     {
-        // flatten M[k] as (n_left*n_phys) × n_right and decompose
+        // M[k] flattened as (n_left*n_phys) × n_right,  M = Q * R
         auto ab = MatQR<T>{}(core[k].flatten_as_matrix2(), true);
         MatrixX& Q = ab[0];
         MatrixX& R = ab[1];
 
-        // Store Q back into site k
-        core[k] = Tensor3D<T>(core[k].n_left, core[k].n_phys, Q.cols());
-        std::copy(Q.data(), Q.data() + Q.size(), core[k].data.begin());
+        if (!compress) {
+            core[k] = Tensor3D<T>(core[k].n_left, core[k].n_phys, Q.cols());
+            std::copy(Q.data(), Q.data() + Q.size(), core[k].data.begin());
 
-        // Contract R into site k+1
-        MatrixX M2 = R * core[k+1].flatten_as_matrix1();
-        core[k+1] = Tensor3D<T>(M2.rows(), core[k+1].n_phys, core[k+1].n_right);
-        std::copy(M2.data(), M2.data() + M2.size(), core[k+1].data.begin());
+            MatrixX M2 = R * core[k+1].flatten_as_matrix1();
+            core[k+1] = Tensor3D<T>(M2.rows(), core[k+1].n_phys, core[k+1].n_right);
+            std::copy(M2.data(), M2.data() + M2.size(), core[k+1].data.begin());
+        }
+        else {
+            // R = U * diag(s) * V^H, truncated to mu inside SVDDecomp
+            SVDDecomp<T> svd(R, /*leftOrthogonal=*/true, reltol_param, max_bond_dim_param);
+            Eigen::Index mu = svd.s.size();
+
+            MatrixX Qnew = Q * svd.left();     // Q * U          : (n_left*n_phys) × mu
+            MatrixX Rnew = svd.right();        // diag(s) * V^H  : mu × n_right_old
+
+            core[k] = Tensor3D<T>(core[k].n_left, core[k].n_phys, mu);
+            std::copy(Qnew.data(), Qnew.data() + Qnew.size(), core[k].data.begin());
+
+            MatrixX M2 = Rnew * core[k+1].flatten_as_matrix1();
+            core[k+1] = Tensor3D<T>(mu, core[k+1].n_phys, core[k+1].n_right);
+            std::copy(M2.data(), M2.data() + M2.size(), core[k+1].data.begin());
+        }
     }
 
-    void _right_canonify_k(int k)
+    void _right_canonify_k(int k, bool compress = false)
     {
-        // flatten M[k] as n_left × (n_phys*n_right) and decompose
+        // M[k] flattened as n_left × (n_phys*n_right),  M = L * Q
         auto ab = MatQR<T>{}(core[k].flatten_as_matrix1(), false);
-        MatrixX& L = ab[0];
-        MatrixX& Q = ab[1];
+        MatrixX& L = ab[0];   // n_left × K   (this is rtr.T in Python terms)
+        MatrixX& Q = ab[1];   // K × (n_phys*n_right)
 
-        // Store Q back into site k
-        core[k] = Tensor3D<T>(Q.rows(), core[k].n_phys, core[k].n_right);
-        std::copy(Q.data(), Q.data() + Q.size(), core[k].data.begin());
+        if (!compress) {
+            core[k] = Tensor3D<T>(Q.rows(), core[k].n_phys, core[k].n_right);
+            std::copy(Q.data(), Q.data() + Q.size(), core[k].data.begin());
 
-        // Contract L into site k-1
-        MatrixX M1 = core[k-1].flatten_as_matrix2() * L;
-        core[k-1] = Tensor3D<T>(core[k-1].n_left, core[k-1].n_phys, M1.cols());
-        std::copy(M1.data(), M1.data() + M1.size(), core[k-1].data.begin());
+            MatrixX M1 = core[k-1].flatten_as_matrix2() * L;
+            core[k-1] = Tensor3D<T>(core[k-1].n_left, core[k-1].n_phys, M1.cols());
+            std::copy(M1.data(), M1.data() + M1.size(), core[k-1].data.begin());
+        }
+        else {
+            // L = U * diag(s) * V^H, truncated to mu inside SVDDecomp
+            SVDDecomp<T> svd(L, /*leftOrthogonal=*/false, reltol_param, max_bond_dim_param);
+            Eigen::Index mu = svd.s.size();
+
+            MatrixX Qnew = svd.right() * Q;    // V^H * Q        : mu × (n_phys*n_right)
+            MatrixX Lnew = svd.left();         // U * diag(s)    : n_left × mu
+
+            core[k] = Tensor3D<T>(mu, core[k].n_phys, core[k].n_right);
+            std::copy(Qnew.data(), Qnew.data() + Qnew.size(), core[k].data.begin());
+
+            MatrixX M1 = core[k-1].flatten_as_matrix2() * Lnew;
+            core[k-1] = Tensor3D<T>(core[k-1].n_left, core[k-1].n_phys, mu);
+            std::copy(M1.data(), M1.data() + M1.size(), core[k-1].data.begin());
+        }
     }
 
-    void increase_w()
+    void increase_w(bool compress=false)
     {
         // Move the working site to the left
-        _left_canonify_k(w);
+        _left_canonify_k(w, compress);
         w += 1;
     }
 
-    void decrease_w()
+    void decrease_w(bool compress=false)
     {
         //Move the working site to the right
-        _right_canonify_k(w);
+        _right_canonify_k(w, compress);
         w -= 1;
     }
 
-    void _initialize_w(int new_w)
+    void _initialize_w(int new_w, bool compress=false)
     {
         if (new_w == -1)
             return;
         for (int i = 0; i < new_w; i++)
-            _left_canonify_k(i);
+            _left_canonify_k(i, compress);
         for (int i = static_cast<int>(core.size()) - 1; i > new_w; i--)
-            _right_canonify_k(i);
+            _right_canonify_k(i, compress);
         this->w = new_w;
     }
 
-    void shift_w(int new_w)
+    void shift_w(int new_w, bool compress=false)
     {
         if (w == -1)
         {
@@ -228,10 +265,10 @@ class TT{
 
         if (steps > 0)
             for (int i = 0; i < steps; i++)
-                increase_w();
+                increase_w(compress);
         else
             for (int i = 0; i < -steps; i++)
-                decrease_w();
+                decrease_w(compress);
     }
 
     void check_canonical(typename Eigen::NumTraits<T>::Real tol = 1e-8) const
@@ -265,6 +302,162 @@ class TT{
     }
 
     // =============================================================
+    //                      TT operator:
+    // =============================================================
+
+    TT operator+(TT const& other) const
+    {
+        if (nBit != other.nBit)
+            throw std::invalid_argument("TT::operator+: the lengths of the two TTs are different");
+
+        // --- single-site case: plain element-wise sum ---
+        if (nBit == 1) {
+            auto const& a = core[0];
+            auto const& b = other.core[0];
+            if (a.n_left != b.n_left || a.n_phys != b.n_phys || a.n_right != b.n_right)
+                throw std::invalid_argument("TT::operator+: incompatible single-site shapes");
+
+            Tensor3D<T> t(a.n_left, a.n_phys, a.n_right);
+            for (std::size_t j = 0; j < t.data.size(); j++)
+                t.data[j] = a.data[j] + b.data[j];
+
+            VecTT res;
+            res.push_back(std::move(t));
+            return TT(std::move(res), max_bond_dim_param, reltol_param, /*w_=*/-1);
+        }
+
+        VecTT res;
+        res.reserve(nBit);
+
+        // --- first core: shape (n_left, n_phys, r1 + r2) ---
+        {
+            auto const& a = core[0];
+            auto const& b = other.core[0];
+            if (a.n_left != b.n_left || a.n_phys != b.n_phys)
+                throw std::invalid_argument("TT::operator+: incompatible first cores");
+
+            Tensor3D<T> t(a.n_left, a.n_phys, a.n_right + b.n_right);  // zero-initialized
+            for (Eigen::Index p = 0; p < a.n_phys; p++) {
+                t.phys(p).leftCols(a.n_right)  = a.phys_const(p);
+                t.phys(p).rightCols(b.n_right) = b.phys_const(p);
+            }
+            res.push_back(std::move(t));
+        }
+
+        // --- middle cores: shape (l1 + l2, n_phys, r1 + r2), block diagonal ---
+        for (int i = 1; i < nBit - 1; i++) {
+            auto const& a = core[i];
+            auto const& b = other.core[i];
+            if (a.n_phys != b.n_phys)
+                throw std::invalid_argument("TT::operator+: the physical dimensions of the two TTs are different");
+
+            Tensor3D<T> t(a.n_left + b.n_left, a.n_phys, a.n_right + b.n_right);  // zero-initialized
+            for (Eigen::Index p = 0; p < a.n_phys; p++) {
+                t.phys(p).topLeftCorner(a.n_left, a.n_right)     = a.phys_const(p);
+                t.phys(p).bottomRightCorner(b.n_left, b.n_right) = b.phys_const(p);
+            }
+            res.push_back(std::move(t));
+        }
+
+        // --- last core: shape (l1 + l2, n_phys, n_right) ---
+        {
+            auto const& a = core[nBit - 1];
+            auto const& b = other.core[nBit - 1];
+            if (a.n_phys != b.n_phys || a.n_right != b.n_right)
+                throw std::invalid_argument("TT::operator+: incompatible last cores");
+
+            Tensor3D<T> t(a.n_left + b.n_left, a.n_phys, a.n_right);
+            for (Eigen::Index p = 0; p < a.n_phys; p++) {
+                t.phys(p).topRows(a.n_left)    = a.phys_const(p);
+                t.phys(p).bottomRows(b.n_left) = b.phys_const(p);
+            }
+            res.push_back(std::move(t));
+        }
+
+        // w = -1: the sum does not preserve the canonical properties of the side tensors.
+        // Call shift_w(...) or compress_svd(...) on the result if you need canonical form.
+        return TT(std::move(res), max_bond_dim_param, reltol_param, /*w_=*/-1);
+    }
+
+    // in-place variant
+    TT& operator+=(TT const& other)
+    {
+        *this = *this + other;
+        return *this;
+    }
+
+    TT operator*(T scalar) const
+    {
+        TT res(*this);
+
+        if (scalar == T(0)) {
+            for (int i = 0; i < nBit; i++)
+                res.core[i] = Tensor3D<T>(1, core[i].n_phys, 1);  // zero-initialized
+            res.w = -1;
+        }
+        else {
+            int k = (res.w == -1) ? 0 : res.w;
+            for (auto& x : res.core[k].data)
+                x *= scalar;
+        }
+        return res;
+    }
+
+    // scalar * TT (so both  tt * s  and  s * tt  work)
+    friend TT operator*(T scalar, TT const& tt)
+    {
+        return tt * scalar;
+    }
+
+    // Unary minus: -tt
+    TT operator-() const
+    {
+        return (*this) * T(-1);
+    }
+
+    // Subtraction, mirroring the Python:  self + (-1) * other
+    TT operator-(TT const& other) const
+    {
+        return *this + other * T(-1);
+    }
+
+    // Division by scalar, mirroring the Python:  self * (1 / other)
+    TT operator/(T scalar) const
+    {
+        return (*this) * (T(1) / scalar);
+    }
+
+    // Optional in-place variants
+    TT& operator-=(TT const& other) { *this = *this - other; return *this; }
+    TT& operator/=(T scalar) { return (*this) *= (T(1) / scalar); }
+    TT& operator*=(T scalar)
+    {
+        if (scalar == T(0)) {
+            for (int i = 0; i < nBit; i++)
+                core[i] = Tensor3D<T>(1, core[i].n_phys, 1);
+            w = -1;
+        }
+        else {
+            int k = (w == -1) ? 0 : w;
+            for (auto& x : core[k].data)
+                x *= scalar;
+        }
+        return *this;
+    }
+
+    // Complex conjugate of the TT (element-wise conj of every core).
+    // Preserves the working site: conjugation keeps orthogonality,
+    // since Q†Q = I  ⇒  conj(Q)† conj(Q) = conj(Q†Q) = I.
+    TT conj() const
+    {
+        TT res(*this);
+        for (auto& t : res.core)
+            for (auto& x : t.data)
+                x = Eigen::numext::conj(x);
+        return res;
+    }
+
+    // =============================================================
     //                      TT misc:
     // =============================================================
 
@@ -294,3 +487,4 @@ class TT{
         return results;
     } 
 };
+
