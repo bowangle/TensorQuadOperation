@@ -16,11 +16,11 @@ class TT{
     using RealScalar = typename Eigen::NumTraits<T>::Real;
 
     private:
-    int nBit;                   // number of tensor
     VecTT core;                 // list of tensor
+    int nBit;                   // number of tensor
     int w;                      // working tensor, -1 for no defined (None)
     int max_bond_dim_param;
-    float a;
+    RealScalar a;
 
     public:
     // =============================================================
