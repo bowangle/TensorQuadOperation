@@ -5,6 +5,9 @@ QD_DIR="$SCRIPT_DIR/extern/qd"
 QD_INSTALL_DIR="$SCRIPT_DIR/extern/qd-install"
 TCI_QUAD_DIR="$SCRIPT_DIR/extern/tci_quad"
 
+echo "==> Cleaning extern/ ..."
+rm -rf "$SCRIPT_DIR"/extern/*
+
 echo "==> Initializing submodules..."
 git -C "$SCRIPT_DIR" submodule update --init --recursive
 
