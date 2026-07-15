@@ -58,7 +58,7 @@ void do_save_TCI(
     auto logger = spdlog::get("test_file_logger");
     if (!logger)
     {
-        logger = spdlog::basic_logger_mt("test_file_logger", "file.log");
+        logger = spdlog::basic_logger_mt("test_file_logger", "test/output/file.log");
     }
 
     TCI_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
@@ -89,8 +89,8 @@ int main()
     int n_iter = 20;
     int nb_point_out = 1000;
 
-    std::string file_prefix_1 = "test/test_out_f1";
-    std::string file_prefix_2 = "test/test_out_f2";
+    std::string file_prefix_1 = "test/output/test_out_f1";
+    std::string file_prefix_2 = "test/output/test_out_f2";
 
     do_save_TCI<float128>(
         a_1,
