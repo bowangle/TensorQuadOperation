@@ -36,7 +36,7 @@ public:
     //
     // which is the same contraction in a different order, at
     // O(chi^3) per site.
-
+private:
     // Full environment: returns the (ra_last x rb_last) matrix.
     // With trivial boundaries this is 1x1; if you later add extra
     // legs on the right boundary, this is the object you want.
@@ -70,6 +70,7 @@ public:
         return E;
     }
 
+public:
     // MPS MPS dot product. Connect all the leg and contract
     T dot(MPS const& other) const
     {
