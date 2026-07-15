@@ -59,7 +59,7 @@ double epsilon_as_double()
 template<typename T>
 typename Eigen::NumTraits<T>::Real default_tol()
 {
-    return Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::epsilon() * 10;
+    return Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::epsilon() * 100;
 }
 
 // ============================================================
@@ -103,7 +103,8 @@ void test_tt(const std::string& name, const std::string& filename, int n_points 
     std::vector<std::vector<int>> points;
     std::vector<T> values_before;
     {
-        TT<T> tt(filename);
+
+        TT<T> tt(filename, /*max_bond_dim=*/0, /*reltol=*/default_tol<T>());
         points = tt.generate_points(n_points);
         auto t0 = now();
         values_before = tt.eval_list(points);

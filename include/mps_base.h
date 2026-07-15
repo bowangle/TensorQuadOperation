@@ -65,8 +65,7 @@ public:
         return E;
     }
 
-    // Scalar overlap <this|other>, the analogue of the Python's
-    // res[0, 0, 0, 0] (no extra legs in the C++ class).
+    // MPS MPS dot product. Connect all the leg and contract
     T dot(MPS const& other) const
     {
         MatrixX E = contract_env(other);

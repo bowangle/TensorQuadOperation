@@ -75,6 +75,10 @@ struct SVDDecomp {
 private:
     static Eigen::Index findnValues(Vec const& s, RealScalar reltol)
     {
+        // Sentinel: reltol < 0 means "no tolerance truncation" -> keep every value
+        if (reltol < RealScalar(0))
+            return s.size();
+
         RealScalar tol2  = reltol * reltol;
         RealScalar norm2 = s.squaredNorm();                 // s is real, stays in RealScalar
         if (norm2 == RealScalar(0)) return 1;               // corner case

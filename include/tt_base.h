@@ -23,7 +23,7 @@ class TT{
     int nBit;                   // number of tensor
     int w;                      // working tensor, -1 for no defined (None)
     int max_bond_dim_param;
-    RealScalar reltol_param;
+    RealScalar reltol_param;    // -1 for no trucation on reltol
 
     public:
     // =============================================================
@@ -152,13 +152,15 @@ class TT{
         _right_to_left(mat_decomp);
     }
 
-    void _compressSVD(typename Eigen::NumTraits<T>::Real reltol=1e-12, int maxBondDim=0) 
+    void _compressSVD(RealScalar reltol=-1, int maxBondDim=0) 
     { 
+        // TODO
+        // make a case where we already have a center and drop the qr loop
         _right_to_left(MatQR<T>{}); 
         _sweep(MatSVDFixedTol<T>{reltol, maxBondDim}); 
     }
 
-    void compress_svd(typename Eigen::NumTraits<T>::Real reltol = 1e-12, int max_bond_dim = -1)
+    void compress_svd(RealScalar reltol = -1, int max_bond_dim = -1)
         {
             int old_w = (w == -1) ? 0 : w;  // capture before any shift
             shift_w(0);
