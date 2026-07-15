@@ -2,6 +2,11 @@
 
 #include "tt_base.h"
 
+// Matrix Product State: a TT whose physical leg is the fused
+// (row x column) operator index — n_phys = 2 for qubits, i.e. cores
+// of shape (chi, 2, chi'), with slot ordering
+//   0 : (0,0)   1 : (0,1)   2 : (1,0)   3 : (1,1)
+
 template<typename T>
 class MPS : public TT<T> {
     using Base       = TT<T>;
