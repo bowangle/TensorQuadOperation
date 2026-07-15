@@ -10,3 +10,7 @@
 	path = extern/qd
 	url = https://github.com/BL-highprecision/QD.git
 	ignore = dirty
+[submodule "extern/tci_quad"]
+	path = extern/tci_quad
+	url = https://github.com/bowangle/tci_quad.git
+	ignore = dirty
