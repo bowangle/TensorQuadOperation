@@ -9,7 +9,7 @@ set(EIGEN_INCLUDE_DIR       ${CMAKE_SOURCE_DIR}/extern/eigen)
 set(QD_INCLUDE_DIR          ${CMAKE_SOURCE_DIR}/extern/qd-install/include)
 set(QD_LIBRARY_DIR          ${CMAKE_SOURCE_DIR}/extern/qd-install/lib)
 set(TCI_QUAD_DIR            ${CMAKE_SOURCE_DIR}/extern/tci_quad/include)
-set(JSON_INCLUDE_DIR        ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/nlohmann_json)
+set(JSON_INCLUDE_DIR        ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/nlohmann_json/include)
 set(spdlog_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/spdlog/include)
 set(TYPING_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/numeric-type-quad/include)
 

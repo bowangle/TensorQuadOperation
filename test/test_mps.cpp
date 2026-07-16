@@ -1,6 +1,6 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
-#include "int128.h"
+#include "type_int128.h"
 #include "mps_base.h"
 
 #include "runner.h"
