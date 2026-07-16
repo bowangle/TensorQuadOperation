@@ -1,5 +1,6 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
+#include "int128.h"
 #include "mps_base.h"
 
 #include "runner.h"
@@ -38,7 +39,7 @@ cT function_1(typename Eigen::NumTraits<cT>::Real const& v){
 // x-x**2-ix
 template<typename cT> // T is std::complex<Scalar>
 cT function_2(typename Eigen::NumTraits<cT>::Real const& v){
-    return v - v*v - cT(0.0,1.0) * v;
+    return cos(v) - cT(0.0,1.0) * v;
 }
 
 template<typename Scalar>  // T is a scalar
@@ -79,40 +80,114 @@ void do_save_TCI(
     );
 }
 
+template<typename T>
+void print_shape(const MPS<T>& tt, const std::string& name)
+{
+    std::cout << name << " shape: ";
+    for (auto const& [l, p, r] : tt.get_shape())
+        std::cout << "(" << l << "," << p << "," << r << ") ";
+    std::cout << "\n";
+    std::cout << name << " chi: " << tt.get_chi() << "\n";
+}
+
+template<typename cScalar, typename Sint>
+void test_mps(const std::string& name, const std::string& filename_1, const std::string& filename_2, int n_points = 100)
+{
+    using real_Scalar = typename Eigen::NumTraits<cScalar>::Real;
+    // -------------------------------------------------------
+    // 1. Load
+    // -------------------------------------------------------
+    {
+        auto t0 = now();
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        MPS<cScalar> mps_f2(filename_2 + ".tt");
+        std::cout << "[LOAD] OK (" << elapsed_ms(t0) << " ms)\n";
+        print_shape(mps_f1, "original f1");
+        print_shape(mps_f2, "original f2");
+    }
+
+    // -------------------------------------------------------
+    // Generate shared points + reference values
+    // -------------------------------------------------------
+    std::vector<std::vector<int>> points;
+    std::vector<cScalar> values_before_mps_f1;
+    std::vector<cScalar> values_before_mps_f2;
+
+    std::vector<cScalar> value_f1;
+    std::vector<cScalar> value_f2;
+
+    std::vector<cScalar> value_ref_f1;
+    std::vector<cScalar> value_ref_f2;
+    {
+
+        QTGrid<real_Scalar, Sint> grid(filename_1 + "_grid_E.json");
+
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        MPS<cScalar> mps_f2(filename_2 + ".tt");
+
+        points = mps_f1.generate_points(n_points);
+        auto t0 = now();
+        values_before_mps_f1 = mps_f1.eval_list(points);
+        values_before_mps_f2 = mps_f2.eval_list(points);
+        std::cout << "[eval " << n_points << " points original] (" << elapsed_ms(t0) << " ms)\n";
+
+        for (int i=0; i< n_points; i++){
+            const real_Scalar x = grid.id_to_coord(MultiIndex(points[i]));
+            value_ref_f1.push_back(function_1<cScalar>(x));
+            value_ref_f2.push_back(function_2<cScalar>(x));
+        }
+    }
+}
+
 int main()
 {
-    float128 a_1 = -2.0;
-    float128 b_1 = 10.0;
-    float128 c_0 = 0.0;
+    // TCI the two function
+    {
+        using scalar_type = float128;
+        using complex_type = Cfloat128;
 
-    int nBit = 20;
-    int n_iter = 20;
-    int nb_point_out = 1000;
+        scalar_type a_1 = -2.0;
+        scalar_type b_1 = 10.0;
+        scalar_type c_0 = 0.0;
 
-    std::string file_prefix_1 = "test/output/test_out_f1";
-    std::string file_prefix_2 = "test/output/test_out_f2";
+        int nBit = 30;
+        int n_iter = 15;
+        int nb_point_out = 1000;
 
-    do_save_TCI<float128>(
-        a_1,
-        b_1,
-        c_0,
-        nBit,
-        function_1<Cfloat128>,
-        n_iter,
-        true,
-        file_prefix_1,
-        nb_point_out);
-    
-    do_save_TCI<float128>(
-        a_1,
-        b_1,
-        c_0,
-        nBit,
-        function_2<Cfloat128>,
-        n_iter,
-        true,
-        file_prefix_2,
-        nb_point_out);
+        std::string file_prefix_1 = "test/output/test_out_f1";
+        std::string file_prefix_2 = "test/output/test_out_f2";
+
+        do_save_TCI<scalar_type>(
+            a_1,
+            b_1,
+            c_0,
+            nBit,
+            function_1<complex_type>,
+            n_iter,
+            true,
+            file_prefix_1,
+            nb_point_out);
+        
+        do_save_TCI<scalar_type>(
+            a_1,
+            b_1,
+            c_0,
+            nBit,
+            function_2<complex_type>,
+            n_iter,
+            true,
+            file_prefix_2,
+            nb_point_out);
+    }
+
+    const int n_points = 1000;
+    // now we have the following file:
+    std::string file_tt_f1 = "test/output/test_out_f1";
+    std::string file_tt_f2 = "test/output/test_out_f2";
+
+    //test_mps<std::complex<double>, long long>("complex<double>", file_tt_f1, file_tt_f2, n_points);
+    test_mps<std::complex<float128>, util::i128>("complex<float128>", file_tt_f1, file_tt_f2, n_points);
+    //test_mps<std::complex<dd_128>, util::i128>("complex<dd_128>", file_tt_f1, file_tt_f2, n_points);
 
     return 0;
 }
