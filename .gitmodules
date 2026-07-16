@@ -14,3 +14,7 @@
 	path = extern/tci_quad
 	url = https://github.com/bowangle/tci_quad.git
 	ignore = dirty
+[submodule "extern/numeric-type-quad"]
+	path = extern/numeric-type-quad
+	url = https://github.com/bowangle/numeric-type-quad.git
+	ignore = dirty
