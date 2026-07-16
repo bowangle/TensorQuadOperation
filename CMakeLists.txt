@@ -11,6 +11,7 @@ set(QD_LIBRARY_DIR          ${CMAKE_SOURCE_DIR}/extern/qd-install/lib)
 set(TCI_QUAD_DIR            ${CMAKE_SOURCE_DIR}/extern/tci_quad/include)
 set(JSON_INCLUDE_DIR        ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/nlohmann_json)
 set(spdlog_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/spdlog/include)
+set(TYPING_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/numeric-type-quad/include)
 
 
 add_executable(Test1                test/test.cpp)
@@ -29,6 +30,7 @@ foreach(_tgt Test1 Test_Tensor3D Test_Mat_QR Test_Mat_SVDDecomp Test_TT_base Tes
         ${TCI_QUAD_DIR}
         ${JSON_INCLUDE_DIR}
         ${spdlog_INCLUDE_DIR}
+        ${TYPING_INCLUDE_DIR}
     )
     target_link_directories(${_tgt} PRIVATE ${QD_LIBRARY_DIR})
     target_link_libraries(${_tgt} PRIVATE qd quadmath)
