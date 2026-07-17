@@ -29,7 +29,7 @@ template<typename RealT>
 double to_double(RealT const& v) { return static_cast<double>(v); }
 
 template<>
-double to_double<dd_real>(dd_real const& v) { return v.x[0]; }
+double to_double<dd_128>(dd_128 const& v) { return v.x[0]; }
 
 template<>
 double to_double<float128>(float128 const& v) { return v.convert_to<double>(); }

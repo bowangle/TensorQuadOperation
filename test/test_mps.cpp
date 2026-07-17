@@ -98,6 +98,7 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
     // 1. Load
     // -------------------------------------------------------
     {
+        std::cout << "\n " << name;
         auto t0 = now();
         MPS<cScalar> mps_f1(filename_1 + ".tt");
         MPS<cScalar> mps_f2(filename_2 + ".tt");
@@ -141,7 +142,7 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
 
 int main()
 {
-    // TCI the two function
+    // TCI the two function in float128
     {
         using scalar_type = float128;
         using complex_type = Cfloat128;
@@ -185,9 +186,14 @@ int main()
     std::string file_tt_f1 = "test/output/test_out_f1";
     std::string file_tt_f2 = "test/output/test_out_f2";
 
-    test_mps<std::complex<double>, long long>("complex<double>", file_tt_f1, file_tt_f2, n_points);
-    test_mps<std::complex<float128>, util::i128>("complex<float128>", file_tt_f1, file_tt_f2, n_points);
-    //test_mps<std::complex<dd_128>, util::i128>("complex<dd_128>", file_tt_f1, file_tt_f2, n_points);
+    test_mps<std::complex<double>, long long>("complex<double> long long", file_tt_f1, file_tt_f2, n_points);
+    test_mps<std::complex<double>, util::i128>("complex<double> i128", file_tt_f1, file_tt_f2, n_points);
+
+    test_mps<std::complex<float128>, long long>("complex<float128> long long", file_tt_f1, file_tt_f2, n_points);
+    test_mps<std::complex<float128>, util::i128>("complex<float128> i128", file_tt_f1, file_tt_f2, n_points);
+
+    test_mps<std::complex<dd_128>, long long>("complex<dd_128>long long ", file_tt_f1, file_tt_f2, n_points);
+    test_mps<std::complex<dd_128>, util::i128>("complex<dd_128> i128", file_tt_f1, file_tt_f2, n_points);
 
     return 0;
 }
