@@ -129,8 +129,6 @@ void test_function(const std::string& name, const std::string& filename_1, const
     std::cout << "Testing " << name << "\n";
     std::cout << "========================================\n";
 
-    auto t_type = now();
-
     // -------------------------------------------------------
     // 1. Load
     // -------------------------------------------------------
@@ -322,11 +320,11 @@ int main()
     test_function<std::complex<double>, long long>("complex<double> long long", file_tt_f1, file_tt_f2, n_points);
     test_function<std::complex<double>, util::i128>("complex<double> i128", file_tt_f1, file_tt_f2, n_points);
 
-    // test_function<std::complex<float128>, long long>("complex<float128> long long", file_tt_f1, file_tt_f2, n_points);
-    // test_function<std::complex<float128>, util::i128>("complex<float128> i128", file_tt_f1, file_tt_f2, n_points);
-
     test_function<std::complex<dd_128>, long long>("complex<dd_128>long long ", file_tt_f1, file_tt_f2, n_points);
     test_function<std::complex<dd_128>, util::i128>("complex<dd_128> i128", file_tt_f1, file_tt_f2, n_points);
+
+    test_function<std::complex<float128>, long long>("complex<float128> long long", file_tt_f1, file_tt_f2, n_points);
+    test_function<std::complex<float128>, util::i128>("complex<float128> i128", file_tt_f1, file_tt_f2, n_points);
 
     return 0;
 }
