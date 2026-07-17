@@ -14,15 +14,16 @@ set(spdlog_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/spdlog/in
 set(TYPING_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/numeric-type-quad/include)
 
 
-add_executable(Test1                test/test.cpp)
-add_executable(Test_Tensor3D        test/test_Tensor3D.cpp)
-add_executable(Test_Mat_QR          test/test_Mat_QR.cpp)
-add_executable(Test_Mat_SVDDecomp   test/test_Mat_SVDDecomp.cpp)
-add_executable(Test_TT_base         test/test_tt_base.cpp)
-add_executable(Test_MPS_base         test/test_mps.cpp)
+add_executable(Test1                    test/test.cpp)
+add_executable(Test_Tensor3D            test/test_Tensor3D.cpp)
+add_executable(Test_Mat_QR              test/test_Mat_QR.cpp)
+add_executable(Test_Mat_SVDDecomp       test/test_Mat_SVDDecomp.cpp)
+add_executable(Test_TT_base             test/test_tt_base.cpp)
+add_executable(Test_MPS_base            test/test_mps.cpp)
+add_executable(Test_compress_svd        test/test_compress_svd.cpp)
 
 # ---- include dirs (same for all targets) ----------------------------------------
-foreach(_tgt Test1 Test_Tensor3D Test_Mat_QR Test_Mat_SVDDecomp Test_TT_base Test_MPS_base)
+foreach(_tgt Test1 Test_Tensor3D Test_Mat_QR Test_Mat_SVDDecomp Test_TT_base Test_MPS_base Test_compress_svd)
     target_include_directories(${_tgt} PUBLIC
         ${PROJECT_INCLUDE_DIR}
         ${EIGEN_INCLUDE_DIR}
