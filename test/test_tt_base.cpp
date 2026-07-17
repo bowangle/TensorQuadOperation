@@ -280,7 +280,7 @@ void test_tt(const std::string& name, const std::string& filename, int n_points 
     {
         TT<T> tt2(filename);
         Eigen::Index chi_before = tt2.get_chi();
-        int max_bond = std::max((Eigen::Index)1, chi_before / 2);
+        int max_bond = std::max((Eigen::Index)1, chi_before - 2);
         auto t0 = now();
         tt2.compress_svd(default_tol<T>(), max_bond);
         Eigen::Index chi_after = tt2.get_chi();

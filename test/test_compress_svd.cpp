@@ -9,6 +9,8 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <iomanip>
+
 // ============================================================
 // Timer
 // ============================================================
@@ -20,7 +22,40 @@ double elapsed_ms(Clock::time_point start)
 }
 
 // ============================================================
-// Type helpers
+// Numeric helpers
+// ============================================================
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real get_real(T const& v) { return std::real(v); }
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real get_imag(T const& v) { return std::imag(v); }
+
+template<typename RealT>
+double to_double(RealT const& v) { return static_cast<double>(v); }
+
+template<>
+double to_double<dd_128>(dd_128 const& v) { return v.x[0]; }
+
+template<>
+double to_double<float128>(float128 const& v) { return v.convert_to<double>(); }
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real abs2(T const& v)
+{
+    auto re = get_real<T>(v);
+    auto im = get_imag<T>(v);
+    return re*re + im*im;
+}
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real abs2_diff(T const& a, T const& b)
+{
+    return abs2<T>(a - b);
+}
+
+// ============================================================
+// Print helpers
 // ============================================================
 
 template<typename T>
@@ -139,20 +174,103 @@ void test_function(const std::string& name, const std::string& filename_1, const
 
         auto t0 = now();
         tt_value_f1 = tt_f1.eval_list(points);
-        value_ref_f2 = tt_f2.eval_list(points);
+        tt_value_f2 = tt_f2.eval_list(points);
         std::cout << "[eval " << n_points << " points original] (" << elapsed_ms(t0) << " ms)\n";
     }
 
-    // everytime do it for f1 and f2.
-
-    // test 1: compare it to direct function evaluation value_ref_f -tt_value_f
+    // ================================================================
+    // test 1: compare TT evaluation to direct function evaluation
+    //         report abs/rel error for f1 and f2
+    // ================================================================
     {
-        // TODO
+        std::cout << "\n[test 1] TT vs exact function evaluation\n";
+
+        auto err = [&](const std::string& label,
+                        const std::vector<cScalar>& tt_vals,
+                        const std::vector<cScalar>& ref_vals)
+        {
+            Real max_abs2 = Real(0), max_rel2 = Real(0);
+            for (size_t i = 0; i < points.size(); i++)
+            {
+                Real num2 = abs2_diff<cScalar>(tt_vals[i], ref_vals[i]);
+                Real den2 = abs2<cScalar>(ref_vals[i]);
+                if (num2 > max_abs2) max_abs2 = num2;
+                Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                if (rel2 > max_rel2) max_rel2 = rel2;
+            }
+            double max_abs = std::sqrt(to_double<Real>(max_abs2));
+            double max_rel = std::sqrt(to_double<Real>(max_rel2));
+            std::cout << "  " << label
+                      << "  abs_err=" << std::scientific << std::setprecision(4) << max_abs
+                      << "  rel_err=" << max_rel << "\n";
+        };
+
+        err("f1", tt_value_f1, value_ref_f1);
+        err("f2", tt_value_f2, value_ref_f2);
     }
 
-    // test 2: compress_svd from max_bond_dim to max_bond_dim - 5, compare against with value_ref, and against tt_value_f1 which are the mps value before svd
+    // ================================================================
+    // test 2: compress_svd sweep from chi down to chi-5
+    //         compare compressed TT against:
+    //           (a) the exact function (value_ref)
+    //           (b) the original TT evaluation (tt_value before SVD)
+    // ================================================================
     {
-        // TODO
+        std::cout << "\n[test 2] compress_svd truncation sweep\n";
+
+        auto sweep = [&](const std::string& label,
+                          const std::string& filename,
+                          const std::vector<cScalar>& ref_exact,
+                          const std::vector<cScalar>& ref_tt)
+        {
+            TT<cScalar> tt_orig(filename + ".tt");
+            Eigen::Index chi_before = tt_orig.get_chi();
+            Eigen::Index chi_min = std::max((Eigen::Index)1, chi_before - 5);
+
+            std::cout << "  [" << label << "] chi_before=" << chi_before
+                      << "  sweeping down to " << chi_min << "\n";
+
+            for (Eigen::Index max_bond = chi_before; max_bond >= chi_min; max_bond--)
+            {
+                TT<cScalar> tmp(filename + ".tt");
+                tmp.compress_svd(Real(0), max_bond);
+                Eigen::Index chi_after = tmp.get_chi();
+                auto vals = tmp.eval_list(points);
+
+                // error vs exact function
+                Real abs2_exact = Real(0), rel2_exact = Real(0);
+                for (size_t i = 0; i < points.size(); i++)
+                {
+                    Real num2 = abs2_diff<cScalar>(vals[i], ref_exact[i]);
+                    Real den2 = abs2<cScalar>(ref_exact[i]);
+                    if (num2 > abs2_exact) abs2_exact = num2;
+                    Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                    if (rel2 > rel2_exact) rel2_exact = rel2;
+                }
+
+                // error vs original TT
+                Real abs2_tt = Real(0), rel2_tt = Real(0);
+                for (size_t i = 0; i < points.size(); i++)
+                {
+                    Real num2 = abs2_diff<cScalar>(vals[i], ref_tt[i]);
+                    Real den2 = abs2<cScalar>(ref_tt[i]);
+                    if (num2 > abs2_tt) abs2_tt = num2;
+                    Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                    if (rel2 > rel2_tt) rel2_tt = rel2;
+                }
+
+                std::cout << "    max_bond=" << std::setw(2) << max_bond
+                          << "  chi: " << chi_before << " -> " << std::setw(2) << chi_after
+                          << "  vs_exact: abs=" << std::scientific << std::setprecision(4) << std::sqrt(to_double<Real>(abs2_exact))
+                          << "  rel=" << std::sqrt(to_double<Real>(rel2_exact))
+                          << "  |  vs_tt: abs=" << std::sqrt(to_double<Real>(abs2_tt))
+                          << "  rel=" << std::sqrt(to_double<Real>(rel2_tt))
+                          << "\n";
+            }
+        };
+
+        sweep("f1", filename_1, value_ref_f1, tt_value_f1);
+        sweep("f2", filename_2, value_ref_f2, tt_value_f2);
     }
 }
 
@@ -201,8 +319,6 @@ int main()
 
     const int n_points = 1000;
     
-    
-
     test_function<std::complex<double>, long long>("complex<double> long long", file_tt_f1, file_tt_f2, n_points);
     test_function<std::complex<double>, util::i128>("complex<double> i128", file_tt_f1, file_tt_f2, n_points);
 
