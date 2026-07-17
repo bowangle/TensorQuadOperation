@@ -13,6 +13,7 @@
 #include <string>
 #include <chrono>
 #include <cmath>
+#include <functional>
 
 // ============================================================
 // Timer
@@ -80,8 +81,57 @@ void do_save_TCI(
     );
 }
 
+// ============================================================
+// Numeric helpers (mirror test_tt_base.cpp)
+// ============================================================
 template<typename T>
-void print_shape(const MPS<T>& tt, const std::string& name)
+typename Eigen::NumTraits<T>::Real get_real(T const& v) { return std::real(v); }
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real get_imag(T const& v) { return std::imag(v); }
+
+template<typename RealT>
+double to_double(RealT const& v) { return static_cast<double>(v); }
+
+template<>
+double to_double<dd_128>(dd_128 const& v) { return v.x[0]; }
+
+template<>
+double to_double<float128>(float128 const& v) { return v.convert_to<double>(); }
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real abs2(T const& v)
+{
+    auto re = get_real<T>(v);
+    auto im = get_imag<T>(v);
+    return re*re + im*im;
+}
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real abs2_diff(T const& a, T const& b)
+{
+    return abs2<T>(a - b);
+}
+
+template<typename T>
+double epsilon_as_double()
+{
+    return to_double<typename Eigen::NumTraits<T>::Real>(
+        Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::epsilon()
+    );
+}
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real default_tol()
+{
+    return Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::epsilon() * 100;
+}
+
+// ============================================================
+// Print shape
+// ============================================================
+template<typename T>
+void print_shape(const TT<T>& tt, const std::string& name)
 {
     std::cout << name << " shape: ";
     for (auto const& [l, p, r] : tt.get_shape())
@@ -90,15 +140,24 @@ void print_shape(const MPS<T>& tt, const std::string& name)
     std::cout << name << " chi: " << tt.get_chi() << "\n";
 }
 
+// ============================================================
+// Main test function
+// ============================================================
 template<typename cScalar, typename Sint>
 void test_mps(const std::string& name, const std::string& filename_1, const std::string& filename_2, int n_points = 100)
 {
-    using real_Scalar = typename Eigen::NumTraits<cScalar>::Real;
+    using Real = typename Eigen::NumTraits<cScalar>::Real;
+
+    std::cout << "\n========================================\n";
+    std::cout << "Testing " << name << "\n";
+    std::cout << "========================================\n";
+
+    auto t_type = now();
+
     // -------------------------------------------------------
     // 1. Load
     // -------------------------------------------------------
     {
-        std::cout << "\n " << name;
         auto t0 = now();
         MPS<cScalar> mps_f1(filename_1 + ".tt");
         MPS<cScalar> mps_f2(filename_2 + ".tt");
@@ -111,33 +170,622 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
     // Generate shared points + reference values
     // -------------------------------------------------------
     std::vector<std::vector<int>> points;
-    std::vector<cScalar> values_before_mps_f1;
-    std::vector<cScalar> values_before_mps_f2;
-
-    std::vector<cScalar> value_f1;
-    std::vector<cScalar> value_f2;
-
-    std::vector<cScalar> value_ref_f1;
-    std::vector<cScalar> value_ref_f2;
+    std::vector<cScalar> values_before_f1;
+    std::vector<cScalar> values_before_f2;
     {
-
-        QTGrid<real_Scalar, Sint> grid(filename_1 + "_grid_E.json");
-
         MPS<cScalar> mps_f1(filename_1 + ".tt");
         MPS<cScalar> mps_f2(filename_2 + ".tt");
 
         points = mps_f1.generate_points(n_points);
         auto t0 = now();
-        values_before_mps_f1 = mps_f1.eval_list(points);
-        values_before_mps_f2 = mps_f2.eval_list(points);
+        values_before_f1 = mps_f1.eval_list(points);
+        values_before_f2 = mps_f2.eval_list(points);
         std::cout << "[eval " << n_points << " points original] (" << elapsed_ms(t0) << " ms)\n";
+    }
 
-        for (int i=0; i< n_points; i++){
-            const real_Scalar x = grid.id_to_coord(MultiIndex(points[i]));
-            value_ref_f1.push_back(function_1<cScalar>(x));
-            value_ref_f2.push_back(function_2<cScalar>(x));
+    // -------------------------------------------------------
+    // check_values lambda
+    // -------------------------------------------------------
+    auto check_values = [&](const std::string& label,
+                             const std::vector<cScalar>& values_after,
+                             const std::vector<cScalar>& reference,
+                             double tol_factor)
+    {
+        Real max_abs2 = Real(0);
+        Real max_rel2 = Real(0);
+        for (size_t i = 0; i < points.size(); i++)
+        {
+            Real num2 = abs2_diff<cScalar>(values_after[i], reference[i]);
+            Real den2 = abs2<cScalar>(reference[i]);
+            if (num2 > max_abs2) max_abs2 = num2;
+            Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+            if (rel2 > max_rel2) max_rel2 = rel2;
+        }
+        double max_abs = std::sqrt(to_double<Real>(max_abs2));
+        double max_rel = std::sqrt(to_double<Real>(max_rel2));
+        double eps_d   = epsilon_as_double<cScalar>();
+
+        std::cout << "  abs err = " << max_abs
+                  << "   rel err = " << max_rel
+                  << "   (rel ratio = " << max_rel / eps_d << " * eps)\n";
+        if (max_rel > tol_factor * eps_d)
+            std::cerr << "  WARNING [" << label << "]: relative error exceeds "
+                      << tol_factor << " * eps!\n";
+        else
+            std::cout << "  [" << label << "] OK\n";
+    };
+
+    const double canon_tol = 1e4;
+
+    // -------------------------------------------------------
+    // 2. _initialize_w at center (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        int center = mps_f1.get_size() / 2;
+        auto t0 = now();
+        mps_f1._initialize_w(center);
+        std::cout << "[_initialize_w(" << center << ")] (" << elapsed_ms(t0) << " ms)\n";
+        mps_f1.check_canonical();
+        auto vals = mps_f1.eval_list(points);
+        check_values("_initialize_w(center)", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 3. _initialize_w(0) (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        auto t0 = now();
+        mps_f1._initialize_w(0);
+        std::cout << "[_initialize_w(0)] (" << elapsed_ms(t0) << " ms)\n";
+        mps_f1.check_canonical();
+        auto vals = mps_f1.eval_list(points);
+        check_values("_initialize_w(0)", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 4. _initialize_w(last) (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        int last = mps_f1.get_size() - 1;
+        auto t0 = now();
+        mps_f1._initialize_w(last);
+        std::cout << "[_initialize_w(" << last << ")] (" << elapsed_ms(t0) << " ms)\n";
+        mps_f1.check_canonical();
+        auto vals = mps_f1.eval_list(points);
+        check_values("_initialize_w(last)", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 5. shift_w left->right (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        mps_f1._initialize_w(0);
+        auto t0 = now();
+        std::cout << "[shift_w left->right]: ";
+        for (int i = 1; i < mps_f1.get_size(); i++)
+        {
+            mps_f1.shift_w(i);
+            mps_f1.check_canonical();
+            std::cout << i << " ";
+        }
+        std::cout << "(" << elapsed_ms(t0) << " ms)\n";
+        auto vals = mps_f1.eval_list(points);
+        check_values("shift_w left->right", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 6. shift_w right->left (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        int last = mps_f1.get_size() - 1;
+        mps_f1._initialize_w(last);
+        auto t0 = now();
+        std::cout << "[shift_w right->left]: ";
+        for (int i = last - 1; i >= 0; i--)
+        {
+            mps_f1.shift_w(i);
+            mps_f1.check_canonical();
+            std::cout << i << " ";
+        }
+        std::cout << "(" << elapsed_ms(t0) << " ms)\n";
+        auto vals = mps_f1.eval_list(points);
+        check_values("shift_w right->left", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 7. compress_svd — no working site (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        Eigen::Index chi_before = mps_f1.get_chi();
+        auto t0 = now();
+        mps_f1.compress_svd(default_tol<cScalar>(), -1);
+        Eigen::Index chi_after = mps_f1.get_chi();
+        std::cout << "[compress_svd no w] chi: " << chi_before << " -> " << chi_after
+                  << " (" << elapsed_ms(t0) << " ms)\n";
+        mps_f1.check_canonical();
+        auto vals = mps_f1.eval_list(points);
+        check_values("compress_svd no w", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 8. compress_svd — working site at center (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        int center = mps_f1.get_size() / 2;
+        mps_f1._initialize_w(center);
+        Eigen::Index chi_before = mps_f1.get_chi();
+        auto t0 = now();
+        mps_f1.compress_svd(default_tol<cScalar>(), -1);
+        Eigen::Index chi_after = mps_f1.get_chi();
+        std::cout << "[compress_svd w=" << center << "] chi: " << chi_before << " -> " << chi_after
+                  << " (" << elapsed_ms(t0) << " ms)\n";
+        mps_f1.check_canonical();
+        auto vals = mps_f1.eval_list(points);
+        check_values("compress_svd w=center", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 9. compress_svd — bond dim truncation sweep (f1)
+    //     Truncate from chi_before down to chi_before-5
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+        Eigen::Index chi_before = mps_f1.get_chi();
+        Eigen::Index chi_min = std::max((Eigen::Index)1, chi_before - 5);
+        std::cout << "[compress_svd truncation sweep] chi_before = " << chi_before
+                  << ", sweeping down to " << chi_min << "\n";
+        for (Eigen::Index max_bond = chi_before; max_bond >= chi_min; max_bond--)
+        {
+            MPS<cScalar> tmp(filename_1 + ".tt");
+            auto t0 = now();
+            tmp.compress_svd(default_tol<cScalar>(), max_bond);
+            Eigen::Index chi_after = tmp.get_chi();
+            double t_ms = elapsed_ms(t0);
+            auto vals = tmp.eval_list(points);
+
+            Real max_abs2 = Real(0);
+            Real max_rel2 = Real(0);
+            for (size_t i = 0; i < points.size(); i++)
+            {
+                Real num2 = abs2_diff<cScalar>(vals[i], values_before_f1[i]);
+                Real den2 = abs2<cScalar>(values_before_f1[i]);
+                if (num2 > max_abs2) max_abs2 = num2;
+                Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                if (rel2 > max_rel2) max_rel2 = rel2;
+            }
+            double max_abs = std::sqrt(to_double<Real>(max_abs2));
+            double max_rel = std::sqrt(to_double<Real>(max_rel2));
+            std::cout << "  max_bond=" << max_bond
+                      << "  chi: " << chi_before << " -> " << chi_after
+                      << "  abs err = " << max_abs
+                      << "  rel err = " << max_rel
+                      << "  (" << t_ms << " ms)\n";
         }
     }
+
+    // -------------------------------------------------------
+    // 10. Scalar multiplication / division (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> tt3 = mps_f1 * cScalar(3);
+        std::cout << "[scalar multiply *3] (" << elapsed_ms(t0) << " ms)\n";
+
+        auto vals = tt3.eval_list(points);
+
+        std::vector<cScalar> expected;
+        expected.reserve(values_before_f1.size());
+        for (auto const& x : values_before_f1)
+            expected.push_back(x * cScalar(3));
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(vals[i], expected[i]);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "  scalar multiply error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+
+        tt3 = tt3 / cScalar(3);
+        auto vals_back = tt3.eval_list(points);
+        check_values("scalar multiply/divide", vals_back, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 11. Zero scalar multiplication (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> mps_f1(filename_1 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> zero = mps_f1 * cScalar(0);
+        std::cout << "[scalar multiply *0] (" << elapsed_ms(t0) << " ms)\n";
+
+        auto vals = zero.eval_list(points);
+
+        Real max_val = Real(0);
+        for (auto const& x : vals)
+        {
+            auto a = abs2<cScalar>(x);
+            if (a > max_val)
+                max_val = a;
+        }
+        std::cout << "  max |zero(x)| = "
+                  << std::sqrt(to_double(max_val))
+                  << "\n";
+
+        if (max_val != Real(0))
+            std::cerr << "WARNING: zero TT is not zero\n";
+    }
+
+    // -------------------------------------------------------
+    // 12. Addition and subtraction (f1 + f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b(filename_1 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> c = a + b;
+        std::cout << "[TT addition f1+f1] (" << elapsed_ms(t0) << " ms)\n";
+        print_shape(c, "f1+f1");
+
+        auto vals = c.eval_list(points);
+
+        std::vector<cScalar> expected;
+        expected.reserve(values_before_f1.size());
+        for (auto const& x : values_before_f1)
+            expected.push_back(x + x);
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(vals[i], expected[i]);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "  addition error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+
+        TT<cScalar> d = c - a;
+        auto vals2 = d.eval_list(points);
+        check_values("addition then subtraction", vals2, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 13. Addition (f1 + f2)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b(filename_2 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> c = a + b;
+        std::cout << "[TT addition f1+f2] (" << elapsed_ms(t0) << " ms)\n";
+        print_shape(c, "f1+f2");
+
+        auto vals = c.eval_list(points);
+
+        std::vector<cScalar> expected;
+        expected.reserve(values_before_f1.size());
+        for (size_t i = 0; i < values_before_f1.size(); i++)
+            expected.push_back(values_before_f1[i] + values_before_f2[i]);
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(vals[i], expected[i]);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "  f1+f2 error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 14. Subtraction (f1 - f2)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b(filename_2 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> c = a - b;
+        std::cout << "[TT subtraction f1-f2] (" << elapsed_ms(t0) << " ms)\n";
+
+        auto vals = c.eval_list(points);
+
+        std::vector<cScalar> expected;
+        expected.reserve(values_before_f1.size());
+        for (size_t i = 0; i < values_before_f1.size(); i++)
+            expected.push_back(values_before_f1[i] - values_before_f2[i]);
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(vals[i], expected[i]);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "  f1-f2 error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 15. Unary minus (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> neg = -a;
+        std::cout << "[unary minus] (" << elapsed_ms(t0) << " ms)\n";
+
+        auto vals = neg.eval_list(points);
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(vals[i], -values_before_f1[i]);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "  unary minus error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 16. In-place operators (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+
+        a += a;
+        a -= a;
+
+        auto vals = a.eval_list(points);
+
+        Real max_val = Real(0);
+        for (auto const& x : vals)
+        {
+            Real e = abs2<cScalar>(x);
+            if (e > max_val)
+                max_val = e;
+        }
+        std::cout << "[in-place += -=] residual = "
+                  << std::sqrt(to_double<Real>(max_val))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 17. In-place scalar operators (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+
+        a *= cScalar(2);
+        a /= cScalar(2);
+
+        auto vals = a.eval_list(points);
+        check_values("in-place *= /=", vals, values_before_f1, canon_tol);
+    }
+
+    // -------------------------------------------------------
+    // 18. Conjugation (f1)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> tt2(filename_1 + ".tt");
+
+        auto t0 = now();
+        TT<cScalar> conj_tt = tt2.conj();
+        std::cout << "[conjugation] (" << elapsed_ms(t0) << " ms)\n";
+
+        auto vals = conj_tt.eval_list(points);
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            cScalar expected = Eigen::numext::conj(values_before_f1[i]);
+            Real e = abs2_diff<cScalar>(vals[i], expected);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "  conjugation error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 19. Copy constructor independence
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b = a;
+
+        b *= cScalar(5);
+
+        auto va = a.eval_list(points);
+        auto vb = b.eval_list(points);
+
+        bool identical = true;
+        for(size_t i = 0; i < va.size(); i++)
+        {
+            if(abs2_diff<cScalar>(va[i], vb[i]) == Real(0))
+            {
+                identical = false;
+                break;
+            }
+        }
+        std::cout << "[copy independence] "
+                  << (identical ? "OK" : "FAILED")
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 20. get_core consistency
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> tt2(filename_1 + ".tt");
+
+        auto const& cref = tt2.get_core();
+        bool ok = (cref.size() == static_cast<size_t>(tt2.get_size()));
+        std::cout << "[get_core const access] "
+                  << (ok ? "OK" : "FAILED")
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 21. generate_points range check
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> tt2(filename_1 + ".tt");
+
+        auto pts = tt2.generate_points(1000);
+
+        bool ok = true;
+        for(auto const& p : pts)
+        {
+            if((int)p.size() != tt2.get_size())
+                ok = false;
+            for(int i = 0; i < tt2.get_size(); i++)
+            {
+                auto shape = tt2.get_shape()[i];
+                int nphys = std::get<1>(shape);
+                if(p[i] < 0 || p[i] >= nphys)
+                    ok = false;
+            }
+        }
+        std::cout << "[generate_points range] "
+                  << (ok ? "OK" : "FAILED")
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 22. Evaluation linearity: (a+b)(x) == a(x)+b(x)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b(filename_1 + ".tt");
+
+        TT<cScalar> c = a + b;
+
+        auto va = a.eval_list(points);
+        auto vb = b.eval_list(points);
+        auto vc = c.eval_list(points);
+
+        Real max_err2 = Real(0);
+        for(size_t i = 0; i < points.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(
+                vc[i],
+                va[i] + vb[i]
+            );
+            if(e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "[linearity check] error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 23. MPS dot product: <f1|f1>
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+
+        auto t0 = now();
+        cScalar dot_val = a.dot(a);
+        auto n2 = a.norm2();
+        std::cout << "[MPS dot f1.f1] (" << elapsed_ms(t0) << " ms)\n";
+        std::cout << "  <f1|f1> = " << dot_val << "\n";
+        std::cout << "  norm2   = " << n2 << "\n";
+
+        Real diff2 = abs2_diff<cScalar>(dot_val, cScalar(n2));
+        std::cout << "  |dot - norm2| = "
+                  << std::sqrt(to_double<Real>(diff2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 24. MPS dot product: <f1|f2>
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b(filename_2 + ".tt");
+
+        auto t0 = now();
+        cScalar dot_val = a.dot(b);
+        std::cout << "[MPS dot f1.f2] (" << elapsed_ms(t0) << " ms)\n";
+        std::cout << "  <f1|f2> = " << dot_val << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 25. MPS dot product: <f2|f2>
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> b(filename_2 + ".tt");
+
+        auto t0 = now();
+        cScalar dot_val = b.dot(b);
+        auto n2 = b.norm2();
+        std::cout << "[MPS dot f2.f2] (" << elapsed_ms(t0) << " ms)\n";
+        std::cout << "  <f2|f2> = " << dot_val << "\n";
+        std::cout << "  norm2   = " << n2 << "\n";
+
+        Real diff2 = abs2_diff<cScalar>(dot_val, cScalar(n2));
+        std::cout << "  |dot - norm2| = "
+                  << std::sqrt(to_double<Real>(diff2))
+                  << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 26. MPS promotion from TT (construct MPS from TT result)
+    // -------------------------------------------------------
+    {
+        MPS<cScalar> a(filename_1 + ".tt");
+        MPS<cScalar> b(filename_1 + ".tt");
+
+        TT<cScalar> sum_tt = a + b;
+        MPS<cScalar> sum_mps(std::move(sum_tt));
+
+        auto vals = sum_mps.eval_list(points);
+
+        std::vector<cScalar> expected;
+        expected.reserve(values_before_f1.size());
+        for (auto const& x : values_before_f1)
+            expected.push_back(x + x);
+
+        Real max_err2 = Real(0);
+        for (size_t i = 0; i < vals.size(); i++)
+        {
+            Real e = abs2_diff<cScalar>(vals[i], expected[i]);
+            if (e > max_err2)
+                max_err2 = e;
+        }
+        std::cout << "[MPS from TT] eval error = "
+                  << std::sqrt(to_double<Real>(max_err2))
+                  << "\n";
+    }
+
+    std::cout << "----------------------------------------\n";
+    std::cout << "Total time for " << name << ": " << elapsed_ms(t_type) << " ms\n";
 }
 
 int main()
