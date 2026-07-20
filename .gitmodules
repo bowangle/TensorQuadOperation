@@ -1,20 +1,4 @@
-[submodule "extern/eigen"]
-	path = extern/eigen
-	url = https://gitlab.com/libeigen/eigen.git
-	ignore = dirty
-[submodule "extern/pybind11"]
-	path = extern/pybind11
-	url = https://github.com/pybind/pybind11.git
-	ignore = dirty
-[submodule "extern/qd"]
-	path = extern/qd
-	url = https://github.com/BL-highprecision/QD.git
-	ignore = dirty
 [submodule "extern/tci_quad"]
 	path = extern/tci_quad
 	url = https://github.com/bowangle/tci_quad.git
-	ignore = dirty
-[submodule "extern/numeric-type-quad"]
-	path = extern/numeric-type-quad
-	url = https://github.com/bowangle/numeric-type-quad.git
 	ignore = dirty
