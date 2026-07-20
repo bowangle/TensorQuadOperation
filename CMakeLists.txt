@@ -21,9 +21,10 @@ add_executable(Test_Mat_SVDDecomp       test/test_Mat_SVDDecomp.cpp)
 add_executable(Test_TT_base             test/test_tt_base.cpp)
 add_executable(Test_MPS_base            test/test_mps.cpp)
 add_executable(Test_compress_svd        test/test_compress_svd.cpp)
+add_executable(Test_MPO                 test/test_mpo.cpp)
 
 # ---- include dirs (same for all targets) ----------------------------------------
-foreach(_tgt Test1 Test_Tensor3D Test_Mat_QR Test_Mat_SVDDecomp Test_TT_base Test_MPS_base Test_compress_svd)
+foreach(_tgt Test1 Test_Tensor3D Test_Mat_QR Test_Mat_SVDDecomp Test_TT_base Test_MPS_base Test_compress_svd Test_MPO)
     target_include_directories(${_tgt} PUBLIC
         ${PROJECT_INCLUDE_DIR}
         ${EIGEN_INCLUDE_DIR}
