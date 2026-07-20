@@ -63,21 +63,31 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
             "utc::zip_up_mpo_mps: bond dimension mismatch between environment and cores");
 
     // ================================================================
-    // Step 1:  r(A,l,L) * x(l,col,rM)  →  X_mat  (batched over col)
+    // Step 1:  r(A,l,L) * x(l,col,rM)  →  scatter directly into X_big
     //
-    // Stack r.right_const(Lidx) vertically into  Rstack(A*L, l),
-    // then multiply by the MPS slice for each col (single GEMM each).
-    // X_mat is (A*L*p_in, n_rM)  where the row for (col,L_idx,a) is
-    //   a + L_idx*A + col*A*L.
+    // Stack r.right_const(Lidx) vertically into  Rstack(A*L, l).
+    // For each col: T = Rstack * x.phys_const(col)   (A·L, n_rM).
+    // Then scatter each column of T into X_big using CONTIGUOUS
+    // segment copies — no element-by-element stride-penalty.
+    // X_big ends up as (A·n_rM, L·p_in) column-major, ready for GEMM.
     // ================================================================
     MatrixX Rstack(A * L, l_dim);
     for (Eigen::Index Lidx = 0; Lidx < L; ++Lidx)
         Rstack.middleRows(Lidx * A, A) = r.right_const(Lidx);
 
-    MatrixX X_mat(A * L * p_in, n_rM);
-    for (Eigen::Index col = 0; col < p_in; ++col)
-        X_mat.middleRows(col * A * L, A * L).noalias()
-            = Rstack * x.phys_const(col);
+    MatrixX X_big(A * n_rM, L * p_in);
+    for (Eigen::Index col = 0; col < p_in; ++col) {
+        // Tmp = Rstack * x.phys_const(col)   (A·L, n_rM) — single GEMM
+        MatrixX Tmp(A * L, n_rM);
+        Tmp.noalias() = Rstack * x.phys_const(col);
+
+        // Scatter Tmp into X_big with contiguous segments.
+        // Tmp(Lidx·A + a, rM)  →  X_big(rM·A + a, Lidx + col·L)
+        for (Eigen::Index Lidx = 0; Lidx < L; ++Lidx)
+            for (Eigen::Index rM = 0; rM < n_rM; ++rM)
+                X_big.col(Lidx + col * L).segment(rM * A, A)
+                    = Tmp.col(rM).segment(Lidx * A, A);
+    }
 
     // ================================================================
     // Step 2:  build  MpoMat(L*p_in, p_out*n_RO)  from the MPO core
@@ -96,30 +106,23 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
     }
 
     // ================================================================
-    // Step 3:  contract over (L, col)  and reshape to final M
-    //
-    // For each rM we extract an (A, L*p_in) slice from X_mat,
-    // multiply by MpoMat → (A, p_out*n_RO), then scatter into M.
+    // Step 3:  single batched GEMM
+    // X_big(A·n_rM, L·p_in) × MpoMat(L·p_in, p_out·n_RO) → M_temp
     // ================================================================
-    MatrixX M = MatrixX::Zero(A * p_out, n_rM * n_RO);
-    for (Eigen::Index rM = 0; rM < n_rM; ++rM) {
-        // Extract X_rM(A, L*p_in) from X_mat column rM.
-        // X_mat(col*A*L + Lidx*A + a, rM)  →  X_rM(a, Lidx + col*L)
-        MatrixX X_rM(A, L * p_in);
-        for (Eigen::Index col = 0; col < p_in; ++col)
-            for (Eigen::Index Lidx = 0; Lidx < L; ++Lidx)
-                X_rM.col(Lidx + col * L)
-                    = X_mat.col(rM).segment(Lidx * A + col * A * L, A);
+    MatrixX M_temp(A * n_rM, p_out * n_RO);
+    M_temp.noalias() = X_big * MpoMat;
 
-        // Single GEMM  (A, L*p_in) × (L*p_in, p_out*n_RO) = (A, p_out*n_RO)
-        MatrixX M_rM(A, p_out * n_RO);
-        M_rM.noalias() = X_rM * MpoMat;
-
-        // Scatter M_rM(a, row + RO*p_out)  into  M(a + row*A, rM + RO*n_rM)
-        for (Eigen::Index RO = 0; RO < n_RO; ++RO)
-            for (Eigen::Index row = 0; row < p_out; ++row)
+    // Scatter M_temp into final M with contiguous segment copies.
+    // M_temp(a + rM·A, src_col)  →  M(a + row·A, rM + RO·n_rM)
+    // Both sides are contiguous: a segment of length A within a single column.
+    MatrixX M(A * p_out, n_rM * n_RO);
+    for (Eigen::Index RO = 0; RO < n_RO; ++RO) {
+        for (Eigen::Index row = 0; row < p_out; ++row) {
+            Eigen::Index src_col = row + RO * p_out;
+            for (Eigen::Index rM = 0; rM < n_rM; ++rM)
                 M.col(rM + RO * n_rM).segment(row * A, A)
-                    += M_rM.col(row + RO * p_out);
+                    = M_temp.col(src_col).segment(rM * A, A);
+        }
     }
 
     return M;
