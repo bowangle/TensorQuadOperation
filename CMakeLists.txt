@@ -6,15 +6,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(OpenMP REQUIRED)
 
-set(PROJECT_INCLUDE_DIR     ${CMAKE_SOURCE_DIR}/include)
-set(EIGEN_INCLUDE_DIR       ${CMAKE_SOURCE_DIR}/extern/eigen)
-set(QD_INCLUDE_DIR          ${CMAKE_SOURCE_DIR}/extern/qd-install/include)
-set(QD_LIBRARY_DIR          ${CMAKE_SOURCE_DIR}/extern/qd-install/lib)
-set(TCI_QUAD_DIR            ${CMAKE_SOURCE_DIR}/extern/tci_quad/include)
-set(JSON_INCLUDE_DIR        ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/nlohmann_json/include)
-set(spdlog_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/tci_quad/extern/spdlog/include)
-set(TYPING_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extern/numeric-type-quad/include)
+# rename for shorter path:
+set(TCI_QUAD_DIR            ${CMAKE_SOURCE_DIR}/extern/tci_quad)
+set(NUMERIC_TYPE_DIR        ${TCI_QUAD_DIR}/extern/numeric-type-quad)
 
+# include project:
+set(PROJECT_INCLUDE_DIR     ${CMAKE_SOURCE_DIR}/include)
+set(TYPING_INCLUDE_DIR      ${NUMERIC_TYPE_DIR}/include)
+set(TCI_QUAD_INCLUDE_DIR    ${TCI_QUAD_DIR}/include)
+
+# include dependance:
+set(EIGEN_INCLUDE_DIR       ${NUMERIC_TYPE_DIR}/extern/eigen)
+set(QD_INCLUDE_DIR          ${NUMERIC_TYPE_DIR}/extern/qd-install/include)
+set(QD_LIBRARY_DIR          ${NUMERIC_TYPE_DIR}/extern/qd-install/lib)
+
+set(JSON_INCLUDE_DIR        ${TCI_QUAD_DIR}/extern/nlohmann_json/include)
+set(spdlog_INCLUDE_DIR      ${TCI_QUAD_DIR}/extern/spdlog/include)
 
 add_executable(Test1                    test/test.cpp)
 add_executable(Test_Tensor3D            test/test_Tensor3D.cpp)
@@ -31,7 +38,7 @@ foreach(_tgt Test1 Test_Tensor3D Test_Mat_QR Test_Mat_SVDDecomp Test_TT_base Tes
         ${PROJECT_INCLUDE_DIR}
         ${EIGEN_INCLUDE_DIR}
         ${QD_INCLUDE_DIR}
-        ${TCI_QUAD_DIR}
+        ${TCI_QUAD_INCLUDE_DIR}
         ${JSON_INCLUDE_DIR}
         ${spdlog_INCLUDE_DIR}
         ${TYPING_INCLUDE_DIR}

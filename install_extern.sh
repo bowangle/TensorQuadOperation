@@ -12,23 +12,9 @@ rm -rf "$SCRIPT_DIR"/extern/*
 echo "==> Initializing submodules..."
 git -C "$SCRIPT_DIR" submodule update --init --recursive
 
-echo "==> Building QD..."
-cd "$QD_DIR"
-autoreconf -fi
-./configure --prefix="$QD_INSTALL_DIR"
-make -j"$(nproc)"
-make install
-echo "==> QD installed to: $QD_INSTALL_DIR"
-
 echo "==> Building TCI quad:"
 cd "$TCI_QUAD_DIR"
 bash install_extern.sh
-bash compile.sh
-
-echo "==> Building Typing:"
-cd "$TYPING_DIR"
-bash install_extern.sh
-bash compile.sh
-
+# bash compile.sh
 
 echo "==> Done!"

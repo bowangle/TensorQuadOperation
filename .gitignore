@@ -1,7 +1,6 @@
 # External dependencies
 
 build/
-extern/qd-install/
 test/output/
 
 # ccache
