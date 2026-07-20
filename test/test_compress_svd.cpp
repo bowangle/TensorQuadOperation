@@ -223,7 +223,7 @@ void test_function(const std::string& name, const std::string& filename_1, const
         {
             TT<cScalar> tt_orig(filename + ".tt");
             Eigen::Index chi_before = tt_orig.get_chi();
-            Eigen::Index chi_min = std::max((Eigen::Index)1, chi_before - 5);
+            Eigen::Index chi_min = 1;
 
             std::cout << "  [" << label << "] chi_before=" << chi_before
                       << "  sweeping down to " << chi_min << "\n";
