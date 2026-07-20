@@ -148,23 +148,17 @@ class TT{
 
     void _sweep(std::function<std::array<MatrixX, 2>(MatrixX, bool)> mat_decomp)
     {
+        // we have to start at the canonical center: w = 0 then propagate right->left->right
         _left_to_right(mat_decomp);
         _right_to_left(mat_decomp);
-    }
-
-    void _compressSVD(RealScalar reltol=-1, int maxBondDim=0) 
-    { 
-        // TODO
-        // make a case where we already have a center and drop the qr loop
-        _right_to_left(MatQR<T>{}); 
-        _sweep(MatSVDFixedTol<T>{reltol, maxBondDim}); 
+        // At the end the canonical center is still w = 0
     }
 
     void compress_svd(RealScalar reltol = -1, int max_bond_dim = -1)
         {
             int old_w = (w == -1) ? 0 : w;  // capture before any shift
-            shift_w(0);
-            _compressSVD(reltol, max_bond_dim);
+            shift_w(0); // (does the QR sweep to set canonical center at 0. After it, the SVD trucation is correct.)
+            _sweep(MatSVDFixedTol<T>{reltol, max_bond_dim}); // truncation is valid.
             w = 0;
             shift_w(old_w);
         }

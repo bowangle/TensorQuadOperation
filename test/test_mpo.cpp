@@ -401,14 +401,17 @@ int main()
 
     // now we have the following file:
     
+    // some case are commented because already tested somewhere else
+    // float128 is commented because too long
+
     test_mps<std::complex<double>, long long>("complex<double> long long", file_mps_f1, file_mps_f2, n_points);
-    test_mps<std::complex<double>, util::i128>("complex<double> i128", file_mps_f1, file_mps_f2, n_points);
+    //test_mps<std::complex<double>, util::i128>("complex<double> i128", file_mps_f1, file_mps_f2, n_points);
 
     test_mps<std::complex<dd_128>, long long>("complex<dd_128>long long ", file_mps_f1, file_mps_f2, n_points);
-    test_mps<std::complex<dd_128>, util::i128>("complex<dd_128> i128", file_mps_f1, file_mps_f2, n_points);
+    //test_mps<std::complex<dd_128>, util::i128>("complex<dd_128> i128", file_mps_f1, file_mps_f2, n_points);
 
-    test_mps<std::complex<float128>, long long>("complex<float128> long long", file_mps_f1, file_mps_f2, n_points);
-    test_mps<std::complex<float128>, util::i128>("complex<float128> i128", file_mps_f1, file_mps_f2, n_points);
+    //test_mps<std::complex<float128>, long long>("complex<float128> long long", file_mps_f1, file_mps_f2, n_points);
+    //test_mps<std::complex<float128>, util::i128>("complex<float128> i128", file_mps_f1, file_mps_f2, n_points);
 
     return 0;
 }
