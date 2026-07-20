@@ -163,41 +163,45 @@ public:
         static_assert(std::is_same_v<T, U>,
                       "MPO::_mul: the scalar type T of the MPO and the MPS must be identical");
 
+        // keep in mind the old position of the canonical center
+        int w0_mps = other.get_w();
+
         // Initial guess for "optimize", captured BEFORE any shifting
         MPS<T> prev = (previous != nullptr) ? *previous : other;
 
-        int w0_mps = other.get_w();
-
-        // Work on a copy of `other`, move canonical center
-        MPS<T> res(other);
-        this->shift_w(0);
-        res.shift_w(0);
-
-        // Looser of the two tolerances
         RealScalar reltol   = std::max(this->get_reltol(), other.get_reltol());
         int max_bond_dim    = _merged_max_bond_dim(other);
+        VecTT core_out;
+        {
+            // Work on a copy of `other` because we move the canonical center to 0.
+            MPS<T> other_mps(other);
+            this->shift_w(0);
+            other_mps.shift_w(0);
 
-        VecTT core;
-        if (method == "zip-up")
-            core = utc::zip_up_mpo_mps<T>(this->core, res.core,
-                                          reltol, max_bond_dim);
-        else if (method == "qrsvd")
-            core = utc::qrsvd_contract_mpo_mps<T>(this->core, res.core);
-        else if (method == "optimize")
-            core = utc::optimize_dm_generic<T>(prev.get_core(),
-                                               this->core, res.core,
-                                               reltol, max_bond_dim,
-                                               order, n_sweeps);
-        else
-            throw std::invalid_argument("MPO::_mul: method not recognized");
+            // Looser of the two tolerances
+            
+            if (method == "zip-up")
+                core_out = utc::zip_up_mpo_mps<T>(this->core, other_mps.get_core(),
+                                            reltol, max_bond_dim);
+            else if (method == "qrsvd")
+                core_out = utc::qrsvd_contract_mpo_mps<T>(this->core, other_mps.get_core());
+            else if (method == "optimize")
+                core_out = utc::optimize_dm_generic<T>(prev.get_core(),
+                                                this->core, other_mps.get_core(),
+                                                reltol, max_bond_dim,
+                                                order, n_sweeps);
+            else
+                throw std::invalid_argument("MPO::_mul: method not recognized");
+        }
+        // At this point we have what we wanted core_out and we can discard all the rest
+        int nBit_ = static_cast<int>(core_out.size());
+        int w_ = (method != "optimize") ? nBit_ - 1 : 0;
+        MPS<T> res(std::move(core_out), max_bond_dim, reltol, w_);
 
-        // res
-        res.core = std::move(core);
-        res.nBit = static_cast<int>(res.core.size());
-        res.w    = (method != "optimize") ? res.nBit - 1 : 0;
-
+        // move the canonical center.
         if (w0_mps != -1)
             res.shift_w(w0_mps, /*compress=*/true);
+
         return res;
     }
 

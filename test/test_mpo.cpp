@@ -45,6 +45,30 @@ cT function_2(typename Eigen::NumTraits<cT>::Real const& v){
 }
 
 // ============================================================
+// Numeric helpers (abs2 / to_double)
+// ============================================================
+template<typename RealT>
+double to_double(RealT const& v) { return static_cast<double>(v); }
+
+template<>
+double to_double<dd_128>(dd_128 const& v) { return v.x[0]; }
+
+template<>
+double to_double<float128>(float128 const& v) { return v.convert_to<double>(); }
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real abs2(T const& v)
+{
+    return std::norm(v);
+}
+
+template<typename T>
+typename Eigen::NumTraits<T>::Real abs2_diff(T const& a, T const& b)
+{
+    return abs2<T>(a - b);
+}
+
+// ============================================================
 // Print shape
 // ============================================================
 template<typename T>
@@ -110,15 +134,15 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
     // 1. Load and compute reference value
     // -------------------------------------------------------
 
-    auto t0 = now();
+    auto tload = now();
     MPS<cScalar> mps_f1(filename_1 + ".tt");
     MPS<cScalar> mps_f2(filename_2 + ".tt");
-    std::cout << "[LOAD] OK (" << elapsed_ms(t0) << " ms)\n";
+    std::cout << "[LOAD] OK (" << elapsed_ms(tload) << " ms)\n";
     print_shape(mps_f1, "original f1");
     print_shape(mps_f2, "original f2");
 
-    MPO<Scalar> mpo_f1 = MPO<Scalar>::from_mps(mps_f1);
-    MPO<Scalar> mpo_f2 = MPO<Scalar>::from_mps(mps_f2);
+    MPO<cScalar> mpo_f1 = MPO<cScalar>::from_mps(mps_f1);
+    MPO<cScalar> mpo_f2 = MPO<cScalar>::from_mps(mps_f2);
 
     std::vector<std::vector<int>> points;   // points is the list of point in id. [[0, 1, ...], [0, 0, ...], ...] 
 
@@ -132,9 +156,6 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
 
     // fill all the data define just before
     {
-        TT<cScalar> mps_f1(filename_1 + ".tt");
-        TT<cScalar> mps_f2(filename_2 + ".tt");
-
         QTGrid<Real, Sint> grid_1(filename_1 + "_grid_E.json");
 
         points = mps_f1.generate_points(n_points);
@@ -153,33 +174,186 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
 
     // Test 2: test the from_mps method:
     {
-        
+        auto t0 = now();
+
+        // 2a. Shape: every core should have n_phys == 4
+        print_shape(mpo_f1, "mpo_f1");
+        print_shape(mpo_f2, "mpo_f2");
+
+        // 2b. Diagonal structure — check element-wise:
+        //     MPO.phys(0) == MPS.phys(0),  MPO.phys(3) == MPS.phys(1),
+        //     MPO.phys(1) == 0,            MPO.phys(2) == 0
+        auto const& mps1_cores = mps_f1.get_core();
+        auto const& mpo1_cores = mpo_f1.get_core();
+        Real max_err = Real(0);
+        for (size_t k = 0; k < mps1_cores.size(); k++) {
+            // phys(0) should match MPS phys(0)
+            max_err = std::max(max_err,
+                (mpo1_cores[k].phys_const(0) - mps1_cores[k].phys_const(0)).norm());
+            // phys(3) should match MPS phys(1)
+            max_err = std::max(max_err,
+                (mpo1_cores[k].phys_const(3) - mps1_cores[k].phys_const(1)).norm());
+            // phys(1) and phys(2) should be zero
+            max_err = std::max(max_err, mpo1_cores[k].phys_const(1).norm());
+            max_err = std::max(max_err, mpo1_cores[k].phys_const(2).norm());
+        }
+        std::cout << "  mpo_f1 diagonal structure: max element-wise diff = "
+                  << to_double<Real>(max_err) << "\n";
+
+        // 2c. w, max_bond_dim should be preserved from the MPS
+        std::cout << "  mpo_f1 w = " << mpo_f1.get_w()
+                  << " (MPS: " << mps_f1.get_w() << ")" << "\n";
+        std::cout << "  mpo_f1 max_bond_dim = " << mpo_f1.get_max_bond_dim()
+                  << " (MPS: " << mps_f1.get_max_bond_dim() << ")" << "\n";
+
+        std::cout << "[from_mps test] (" << elapsed_ms(t0) << " ms)\n";
     }
 
     // Test 3.1: test mpo*mps (_mul) for method = "zip-up"
     {
-        // two error to compute for each case:
-        // mpo_f1 * mps_f2 = mps_value_f1 * mps_value_f2 = value_ref_f1 * value_ref_f2
-        // mpo_f2 * mps_f1 = mps_value_f1 * mps_value_f2 = value_ref_f1 * value_ref_f2
-        // mpo_f1 * mps_f1 = mps_value_f1 * mps_value_f1 = value_ref_f1 * value_ref_f1 = mps_f1.norm2
-        // mpo_f2 * mps_f2 = mps_value_f2 * mps_value_f2 = value_ref_f2 * value_ref_f2 = mps_f2.norm2
+        // reference: pointwise product of the two functions
+        std::vector<cScalar> ref_f1f2(n_points);   // f1(x) * f2(x)
+        std::vector<cScalar> ref_f1f1(n_points);   // f1(x) * f1(x)
+        std::vector<cScalar> ref_f2f2(n_points);   // f2(x) * f2(x)
+        for (int i = 0; i < n_points; i++) {
+            ref_f1f2[i] = value_ref_f1[i] * value_ref_f2[i];
+            ref_f1f1[i] = value_ref_f1[i] * value_ref_f1[i];
+            ref_f2f2[i] = value_ref_f2[i] * value_ref_f2[i];
+        }
 
-        MPS mpo_f1_mps_f2 = mpo_f1._mul(mps_f2, "zip-up");
-        MPS mpo_f2_mps_f1 = mpo_f2._mul(mps_f1, "zip-up");
-        MPS mpo_f1_mps_f1 = mpo_f1._mul(mps_f1, "zip-up");
-        MPS mpo_f2_mps_f2 = mpo_f2._mul(mps_f2, "zip-up");
+        auto t0 = now();
+        MPS<cScalar> mpo_f1_mps_f2 = mpo_f1._mul(mps_f2, "zip-up");
+        MPS<cScalar> mpo_f2_mps_f1 = mpo_f2._mul(mps_f1, "zip-up");
+        MPS<cScalar> mpo_f1_mps_f1 = mpo_f1._mul(mps_f1, "zip-up");
+        MPS<cScalar> mpo_f2_mps_f2 = mpo_f2._mul(mps_f2, "zip-up");
+        std::cout << "[zip-up _mul x4] (" << elapsed_ms(t0) << " ms)\n";
 
+        // evaluate and compute errors
+        auto check = [&](const std::string& label,
+                         const MPS<cScalar>& result,
+                         const std::vector<cScalar>& ref) {
+            auto t1 = now();
+            std::vector<cScalar> vals = result.eval_list(points);
+            std::cout << "  [eval " << label << "] (" << elapsed_ms(t1) << " ms)\n";
+
+            Real max_abs2 = Real(0);
+            Real max_rel2 = Real(0);
+            for (int i = 0; i < n_points; i++) {
+                Real num2 = abs2_diff<cScalar>(vals[i], ref[i]);
+                Real den2 = abs2<cScalar>(ref[i]);
+                if (num2 > max_abs2) max_abs2 = num2;
+                Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                if (rel2 > max_rel2) max_rel2 = rel2;
+            }
+            double max_abs = std::sqrt(to_double<Real>(max_abs2));
+            double max_rel = std::sqrt(to_double<Real>(max_rel2));
+            std::cout << "  " << label << ": abs err = " << max_abs
+                      << "   rel err = " << max_rel << "\n";
+        };
+
+        check("mpo_f1 @ mps_f2", mpo_f1_mps_f2, ref_f1f2);
+        check("mpo_f2 @ mps_f1", mpo_f2_mps_f1, ref_f1f2);
+        check("mpo_f1 @ mps_f1", mpo_f1_mps_f1, ref_f1f1);
+        check("mpo_f2 @ mps_f2", mpo_f2_mps_f2, ref_f2f2);
     }
 
     // Test 3.2: test mpo*mps (_mul) for method = "qrsvd"
     {
+        // reference: pointwise product of the two functions
+        std::vector<cScalar> ref_f1f2(n_points);   // f1(x) * f2(x)
+        std::vector<cScalar> ref_f1f1(n_points);   // f1(x) * f1(x)
+        std::vector<cScalar> ref_f2f2(n_points);   // f2(x) * f2(x)
+        for (int i = 0; i < n_points; i++) {
+            ref_f1f2[i] = value_ref_f1[i] * value_ref_f2[i];
+            ref_f1f1[i] = value_ref_f1[i] * value_ref_f1[i];
+            ref_f2f2[i] = value_ref_f2[i] * value_ref_f2[i];
+        }
 
+        auto t0 = now();
+        MPS<cScalar> mpo_f1_mps_f2 = mpo_f1._mul(mps_f2, "qrsvd");
+        MPS<cScalar> mpo_f2_mps_f1 = mpo_f2._mul(mps_f1, "qrsvd");
+        MPS<cScalar> mpo_f1_mps_f1 = mpo_f1._mul(mps_f1, "qrsvd");
+        MPS<cScalar> mpo_f2_mps_f2 = mpo_f2._mul(mps_f2, "qrsvd");
+        std::cout << "[qrsvd _mul x4] (" << elapsed_ms(t0) << " ms)\n";
+
+        // evaluate and compute errors
+        auto check = [&](const std::string& label,
+                         const MPS<cScalar>& result,
+                         const std::vector<cScalar>& ref) {
+            auto t1 = now();
+            std::vector<cScalar> vals = result.eval_list(points);
+            std::cout << "  [eval " << label << "] (" << elapsed_ms(t1) << " ms)\n";
+
+            Real max_abs2 = Real(0);
+            Real max_rel2 = Real(0);
+            for (int i = 0; i < n_points; i++) {
+                Real num2 = abs2_diff<cScalar>(vals[i], ref[i]);
+                Real den2 = abs2<cScalar>(ref[i]);
+                if (num2 > max_abs2) max_abs2 = num2;
+                Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                if (rel2 > max_rel2) max_rel2 = rel2;
+            }
+            double max_abs = std::sqrt(to_double<Real>(max_abs2));
+            double max_rel = std::sqrt(to_double<Real>(max_rel2));
+            std::cout << "  " << label << ": abs err = " << max_abs
+                      << "   rel err = " << max_rel << "\n";
+        };
+
+        check("mpo_f1 @ mps_f2", mpo_f1_mps_f2, ref_f1f2);
+        check("mpo_f2 @ mps_f1", mpo_f2_mps_f1, ref_f1f2);
+        check("mpo_f1 @ mps_f1", mpo_f1_mps_f1, ref_f1f1);
+        check("mpo_f2 @ mps_f2", mpo_f2_mps_f2, ref_f2f2);
     }
 
     // Test 3.3: test mpo*mps (_mul) for method = "optimize"
     {
+        // reference: pointwise product of the two functions
+        std::vector<cScalar> ref_f1f2(n_points);   // f1(x) * f2(x)
+        std::vector<cScalar> ref_f1f1(n_points);   // f1(x) * f1(x)
+        std::vector<cScalar> ref_f2f2(n_points);   // f2(x) * f2(x)
+        for (int i = 0; i < n_points; i++) {
+            ref_f1f2[i] = value_ref_f1[i] * value_ref_f2[i];
+            ref_f1f1[i] = value_ref_f1[i] * value_ref_f1[i];
+            ref_f2f2[i] = value_ref_f2[i] * value_ref_f2[i];
+        }
 
+        auto t0 = now();
+        MPS<cScalar> mpo_f1_mps_f2 = mpo_f1._mul(mps_f2, "optimize");
+        MPS<cScalar> mpo_f2_mps_f1 = mpo_f2._mul(mps_f1, "optimize");
+        MPS<cScalar> mpo_f1_mps_f1 = mpo_f1._mul(mps_f1, "optimize");
+        MPS<cScalar> mpo_f2_mps_f2 = mpo_f2._mul(mps_f2, "optimize");
+        std::cout << "[optimize _mul x4] (" << elapsed_ms(t0) << " ms)\n";
+
+        // evaluate and compute errors
+        auto check = [&](const std::string& label,
+                         const MPS<cScalar>& result,
+                         const std::vector<cScalar>& ref) {
+            auto t1 = now();
+            std::vector<cScalar> vals = result.eval_list(points);
+            std::cout << "  [eval " << label << "] (" << elapsed_ms(t1) << " ms)\n";
+
+            Real max_abs2 = Real(0);
+            Real max_rel2 = Real(0);
+            for (int i = 0; i < n_points; i++) {
+                Real num2 = abs2_diff<cScalar>(vals[i], ref[i]);
+                Real den2 = abs2<cScalar>(ref[i]);
+                if (num2 > max_abs2) max_abs2 = num2;
+                Real rel2 = (den2 > Real(0)) ? num2 / den2 : num2;
+                if (rel2 > max_rel2) max_rel2 = rel2;
+            }
+            double max_abs = std::sqrt(to_double<Real>(max_abs2));
+            double max_rel = std::sqrt(to_double<Real>(max_rel2));
+            std::cout << "  " << label << ": abs err = " << max_abs
+                      << "   rel err = " << max_rel << "\n";
+        };
+
+        check("mpo_f1 @ mps_f2", mpo_f1_mps_f2, ref_f1f2);
+        check("mpo_f2 @ mps_f1", mpo_f2_mps_f1, ref_f1f2);
+        check("mpo_f1 @ mps_f1", mpo_f1_mps_f1, ref_f1f1);
+        check("mpo_f2 @ mps_f2", mpo_f2_mps_f2, ref_f2f2);
     }
+
+    std::cout << name << " done in " << elapsed_ms(t_type) << " ms)\n";
 }
 
 int main()
@@ -201,9 +375,6 @@ int main()
         int nBit = 30;
         int n_iter = 15;
         int nb_point_out = 1000;
-
-        std::string file_mps_f1 = "test/output/test_mpo_out_f1";
-        std::string file_mps_f2 = "test/output/test_mpo_out_f2";
 
         do_save_TCI<scalar_type>(
             a_1,
@@ -233,11 +404,11 @@ int main()
     test_mps<std::complex<double>, long long>("complex<double> long long", file_mps_f1, file_mps_f2, n_points);
     test_mps<std::complex<double>, util::i128>("complex<double> i128", file_mps_f1, file_mps_f2, n_points);
 
-    test_mps<std::complex<float128>, long long>("complex<float128> long long", file_mps_f1, file_mps_f2, n_points);
-    test_mps<std::complex<float128>, util::i128>("complex<float128> i128", file_mps_f1, file_mps_f2, n_points);
-
     test_mps<std::complex<dd_128>, long long>("complex<dd_128>long long ", file_mps_f1, file_mps_f2, n_points);
     test_mps<std::complex<dd_128>, util::i128>("complex<dd_128> i128", file_mps_f1, file_mps_f2, n_points);
+
+    test_mps<std::complex<float128>, long long>("complex<float128> long long", file_mps_f1, file_mps_f2, n_points);
+    test_mps<std::complex<float128>, util::i128>("complex<float128> i128", file_mps_f1, file_mps_f2, n_points);
 
     return 0;
 }
