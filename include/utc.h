@@ -26,16 +26,18 @@ namespace utc {
 //   M[(a + row*A), (rM + RO*n_rM)]
 //       = sum_{l, L, col} r(a,l,L) x(l,col,rM) o(L, row*p_in+col, RO)
 //
+// This mirrors the Python's two consecutive tensordot calls, each of
+// which maps to a single BLAS GEMM.  We batch the small multiplies
+// into a handful of large matrix products and use block operations
+// for the final scatter, completely eliminating the previous
+// quintuple-nested per-element loops.
+//
 // Index conventions are chosen to line up with Tensor3D's column-major
 // layout: the row index (a fastest, row slower) is exactly
 // flatten_as_matrix2 of a Tensor3D(A, p_out, *), and the column index
 // (rM fastest, RO slower) is exactly flatten_as_matrix1 of a
 // Tensor3D(*, n_rM, n_RO). That lets the SVD factors be copied
 // straight into the output core / next environment with no reshuffle.
-//
-// Contraction order: for each (col), first absorb the MPS slice into
-// the environment (G), then for each (row) multiply by the MPO slice
-// and scatter — O(chi^3) per site, no big temporaries.
 // ---------------------------------------------------------------------
 template<typename T>
 Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>
@@ -46,8 +48,9 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
     const Eigen::Index A     = r.n_left;
-    const Eigen::Index L     = r.n_right;
-    const Eigen::Index p_in  = x.n_phys;
+    const Eigen::Index l_dim = r.n_phys;      // MPS left bond (same as x.n_left)
+    const Eigen::Index L     = r.n_right;     // MPO left bond (same as o.n_left)
+    const Eigen::Index p_in  = x.n_phys;      // MPS physical dim (2 for qubits)
     const Eigen::Index p_out = o.n_phys / p_in;
     const Eigen::Index n_rM  = x.n_right;
     const Eigen::Index n_RO  = o.n_right;
@@ -59,29 +62,66 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
         throw std::invalid_argument(
             "utc::zip_up_mpo_mps: bond dimension mismatch between environment and cores");
 
-    MatrixX M = MatrixX::Zero(A * p_out, n_rM * n_RO);
-    MatrixX G(A * n_rM, L);
+    // ================================================================
+    // Step 1:  r(A,l,L) * x(l,col,rM)  →  X_mat  (batched over col)
+    //
+    // Stack r.right_const(Lidx) vertically into  Rstack(A*L, l),
+    // then multiply by the MPS slice for each col (single GEMM each).
+    // X_mat is (A*L*p_in, n_rM)  where the row for (col,L_idx,a) is
+    //   a + L_idx*A + col*A*L.
+    // ================================================================
+    MatrixX Rstack(A * L, l_dim);
+    for (Eigen::Index Lidx = 0; Lidx < L; ++Lidx)
+        Rstack.middleRows(Lidx * A, A) = r.right_const(Lidx);
 
+    MatrixX X_mat(A * L * p_in, n_rM);
+    for (Eigen::Index col = 0; col < p_in; ++col)
+        X_mat.middleRows(col * A * L, A * L).noalias()
+            = Rstack * x.phys_const(col);
+
+    // ================================================================
+    // Step 2:  build  MpoMat(L*p_in, p_out*n_RO)  from the MPO core
+    //
+    // Element  MpoMat(Lidx + col*L, row + RO*p_out)
+    //        = o(Lidx, row*p_in + col, RO)
+    // ================================================================
+    MatrixX MpoMat(L * p_in, p_out * n_RO);
     for (Eigen::Index col = 0; col < p_in; ++col) {
-        // G[(a + A*rM), L] = sum_l r(a,l,L) * x(l,col,rM)
-        auto B = x.phys_const(col);                        // l x n_rM
-        for (Eigen::Index Lidx = 0; Lidx < L; ++Lidx) {
-            MatrixX tmp = r.right_const(Lidx) * B;         // A x n_rM (col-major)
-            G.col(Lidx) = Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, 1>>(
-                tmp.data(), tmp.size());                   // vec: a fastest
-        }
-
         for (Eigen::Index row = 0; row < p_out; ++row) {
-            // W = o(:, row*p_in + col, :) : L x n_RO
-            MatrixX P = G * o.phys_const(row * p_in + col); // (A*n_rM) x n_RO
-
-            // scatter P[(a + A*rM), RO] into M[(a + row*A), (rM + RO*n_rM)]
+            auto o_slice = o.phys_const(row * p_in + col);   // (L, n_RO)
             for (Eigen::Index RO = 0; RO < n_RO; ++RO)
-                for (Eigen::Index rM = 0; rM < n_rM; ++rM)
-                    M.block(row * A, rM + RO * n_rM, A, 1)
-                        += P.block(rM * A, RO, A, 1);
+                MpoMat.col(row + RO * p_out).segment(col * L, L)
+                    = o_slice.col(RO);
         }
     }
+
+    // ================================================================
+    // Step 3:  contract over (L, col)  and reshape to final M
+    //
+    // For each rM we extract an (A, L*p_in) slice from X_mat,
+    // multiply by MpoMat → (A, p_out*n_RO), then scatter into M.
+    // ================================================================
+    MatrixX M = MatrixX::Zero(A * p_out, n_rM * n_RO);
+    for (Eigen::Index rM = 0; rM < n_rM; ++rM) {
+        // Extract X_rM(A, L*p_in) from X_mat column rM.
+        // X_mat(col*A*L + Lidx*A + a, rM)  →  X_rM(a, Lidx + col*L)
+        MatrixX X_rM(A, L * p_in);
+        for (Eigen::Index col = 0; col < p_in; ++col)
+            for (Eigen::Index Lidx = 0; Lidx < L; ++Lidx)
+                X_rM.col(Lidx + col * L)
+                    = X_mat.col(rM).segment(Lidx * A + col * A * L, A);
+
+        // Single GEMM  (A, L*p_in) × (L*p_in, p_out*n_RO) = (A, p_out*n_RO)
+        MatrixX M_rM(A, p_out * n_RO);
+        M_rM.noalias() = X_rM * MpoMat;
+
+        // Scatter M_rM(a, row + RO*p_out)  into  M(a + row*A, rM + RO*n_rM)
+        for (Eigen::Index RO = 0; RO < n_RO; ++RO)
+            for (Eigen::Index row = 0; row < p_out; ++row)
+                M.col(rM + RO * n_rM).segment(row * A, A)
+                    += M_rM.col(row + RO * p_out);
+    }
+
     return M;
 }
 
@@ -315,15 +355,34 @@ Mat<T> half_left(Tensor3D<T> const& L, Tensor3D<T> const& B,
 
     Mat<T> Z1M = Mat<T>::Zero(nrm * nrk, nzl * Pz);
     auto Lf1 = L.flatten_as_matrix1_const();               // nlm x (nlk*nzl)
+
+    // Work buffer reused across (pm,pz) iterations
+    Mat<T> Y_reorder(nrm * nzl, nlk);
+
     for (Eigen::Index pm = 0; pm < Pm; ++pm) {
-        Mat<T> Y = B.phys_const(pm).transpose() * Lf1;     // nrm x (nlk*nzl)
+        // Y = B_phys^T * Lf1   (nrm, nlk*nzl) — single GEMM
+        Mat<T> Y = B.phys_const(pm).transpose() * Lf1;
+
         for (Eigen::Index pz = 0; pz < Pz; ++pz) {
             auto Wsl = W.phys_const(pz * Pm + pm);         // nlk x nrk
-            for (Eigen::Index lz = 0; lz < nzl; ++lz) {
-                Mat<T> P = Y.middleCols(lz * nlk, nlk) * Wsl;   // nrm x nrk
-                Z1M.col(lz + nzl * pz)
-                    += Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, 1>>(
-                           P.data(), P.size());
+
+            // Reshape Y from (nrm, nlk*nzl) to (nrm*nzl, nlk)
+            // so we can contract all lz at once with a single GEMM.
+            // Layout: Y(rm, lz*nlk + lk) → Y_reorder(rm + lz*nrm, lk)
+            for (Eigen::Index lz = 0; lz < nzl; ++lz)
+                for (Eigen::Index lk = 0; lk < nlk; ++lk)
+                    Y_reorder.col(lk).segment(lz * nrm, nrm)
+                        = Y.col(lz * nlk + lk);
+
+            // Single GEMM: (nrm*nzl, nlk) × (nlk, nrk) = (nrm*nzl, nrk)
+            Mat<T> YW(nrm * nzl, nrk);
+            YW.noalias() = Y_reorder * Wsl;
+
+            // Scatter: YW(rm + lz*nrm, rk) → Z1M(rm + rk*nrm, lz + pz*nzl)
+            for (Eigen::Index rk = 0; rk < nrk; ++rk) {
+                Eigen::Map<const Mat<T>> YW_slice(
+                    YW.col(rk).data(), nrm, nzl);          // (nrm, nzl) col-major
+                Z1M.block(rk * nrm, pz * nzl, nrm, nzl) += YW_slice;
             }
         }
     }
@@ -341,16 +400,35 @@ Mat<T> half_right(Tensor3D<T> const& R, Tensor3D<T> const& B,
 
     Mat<T> MR = Mat<T>::Zero(nlm * nlk, Pz * nzr);
     auto Rf1 = R.flatten_as_matrix1_const();               // nrm x (nrk*nzr)
+
+    // Work buffer reused across (pm,pz) iterations
+    Mat<T> Y_reorder(nlm * nzr, nrk);
+
     for (Eigen::Index pm = 0; pm < Pm; ++pm) {
-        Mat<T> Y = B.phys_const(pm) * Rf1;                 // nlm x (nrk*nzr)
+        // Y = B_phys * Rf1   (nlm, nrk*nzr) — single GEMM
+        Mat<T> Y = B.phys_const(pm) * Rf1;
+
         for (Eigen::Index pz = 0; pz < Pz; ++pz) {
             auto Wsl = W.phys_const(pz * Pm + pm);         // nlk x nrk
-            for (Eigen::Index zr = 0; zr < nzr; ++zr) {
-                Mat<T> P = Y.middleCols(zr * nrk, nrk) * Wsl.transpose();  // nlm x nlk
-                MR.col(pz + Pz * zr)
-                    += Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, 1>>(
-                           P.data(), P.size());
-            }
+
+            // Reshape Y from (nlm, nrk*nzr) to (nlm*nzr, nrk)
+            // Layout: Y(lm, zr*nrk + rk) → Y_reorder(lm + zr*nlm, rk)
+            for (Eigen::Index zr = 0; zr < nzr; ++zr)
+                for (Eigen::Index rk = 0; rk < nrk; ++rk)
+                    Y_reorder.col(rk).segment(zr * nlm, nlm)
+                        = Y.col(zr * nrk + rk);
+
+            // Single GEMM: (nlm*nzr, nrk) × (nrk, nlk) = (nlm*nzr, nlk)
+            // (Wsl^T is (nrk, nlk))
+            Mat<T> YW(nlm * nzr, nlk);
+            YW.noalias() = Y_reorder * Wsl.transpose();
+
+            // Scatter: YW(lm + zr*nlm, lk) → MR(lm + lk*nlm, pz + Pz*zr)
+            // Each (zr,lk) pair contributes a contiguous segment of length nlm.
+            for (Eigen::Index zr = 0; zr < nzr; ++zr)
+                for (Eigen::Index lk = 0; lk < nlk; ++lk)
+                    MR.col(pz + Pz * zr).segment(lk * nlm, nlm)
+                        += YW.col(lk).segment(zr * nlm, nlm);
         }
     }
     return MR;

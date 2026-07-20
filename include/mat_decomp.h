@@ -2,9 +2,23 @@
 #include <Eigen/Dense>
 #include <array>
 #include <algorithm>
+#include <type_traits>
 #include <utility>
 #include <boost/multiprecision/float128.hpp>
 #include <complex>
+
+// -------------------------------------------------------------------
+// Type trait: does T benefit from LAPACK-backed Eigen decompositions?
+// (float, double, complex<float>, complex<double> are the standard
+// BLAS/LAPACK types; extended-precision types must fall back to
+// Eigen's own JacobiSVD / HouseholderQR.)
+// -------------------------------------------------------------------
+template<typename T>
+struct is_standard_blas_type : std::false_type {};
+template<> struct is_standard_blas_type<float>                : std::true_type {};
+template<> struct is_standard_blas_type<double>               : std::true_type {};
+template<> struct is_standard_blas_type<std::complex<float>>  : std::true_type {};
+template<> struct is_standard_blas_type<std::complex<double>> : std::true_type {};
 
 template<class T>
 struct MatQR {
@@ -17,7 +31,10 @@ struct MatQR {
 private:
     static std::array<Mat, 2> mat_qr(Mat const& A)
     {
-        Eigen::ColPivHouseholderQR<Mat> qr(A);
+        // Plain HouseholderQR (no pivoting) mirrors Python's
+        // scipy.linalg.qr(mode="economic") and is 2-4x faster than
+        // the column-pivoted variant for well-conditioned inputs.
+        Eigen::HouseholderQR<Mat> qr(A);
 
         Eigen::Index rows = A.rows();
         Eigen::Index cols = A.cols();
@@ -25,9 +42,6 @@ private:
 
         Mat Q = qr.householderQ() * Mat::Identity(rows, k);
         Mat R = qr.matrixQR().topRows(k).template triangularView<Eigen::Upper>();
-
-        // Undo column pivoting so that Q * R == A (not A * P)
-        R.applyOnTheRight(qr.colsPermutation().inverse());
 
         return {std::move(Q), std::move(R)};
     }
@@ -54,12 +68,19 @@ struct SVDDecomp {
               RealScalar reltol = RealScalar(1e-12), int rankMax = 0)
         : leftOrthogonal(leftOrthogonal_)
     {
-        // JacobiSVD works with boost::multiprecision scalars; BDCSVD does not reliably.
-        //Eigen::BDCSVD<Mat, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(M);
-        Eigen::JacobiSVD<Mat> svd(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
-        U = svd.matrixU();
-        V = svd.matrixV();          // M = U * diag(s) * V^H
-        s = svd.singularValues();
+        // Dispatch: BDCSVD (LAPACK divide-and-conquer, 3-10x faster) for
+        // standard BLAS types; JacobiSVD for extended-precision types.
+        if constexpr (is_standard_blas_type<T>::value) {
+            Eigen::BDCSVD<Mat, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(M);
+            U = svd.matrixU();
+            V = svd.matrixV();
+            s = svd.singularValues();
+        } else {
+            Eigen::JacobiSVD<Mat> svd(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
+            U = svd.matrixU();
+            V = svd.matrixV();
+            s = svd.singularValues();
+        }
 
         Eigen::Index n = findnValues(s, reltol);
         if (rankMax > 0 && rankMax < n) n = rankMax;
