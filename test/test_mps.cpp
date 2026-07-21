@@ -55,7 +55,7 @@ void do_save_TCI(
     const std::string& filename,
     int nb_point_out){
     QTGrid<Scalar, long long> grid(a_1, b_1, nBit);
-    TCI_param tci_param = TCI_param(grid.nBits, n_iter, do_cache);
+    TCI_param tci_param = TCI_param(grid.get_nBits(), n_iter, do_cache);
 
     auto logger = spdlog::get("test_file_logger");
     if (!logger)
@@ -76,8 +76,8 @@ void do_save_TCI(
         filename,           // file_prefix (path+prefix) to save
         nb_point_out,       // nb_point to test error
         E_discontinuity,    // point discontinuity to store
-        grid.a,             // grid minimal point
-        grid.b              // grid maximal point
+        grid.get_a(),       // grid minimal point
+        grid.get_b()        // grid maximal point
     );
 }
 
