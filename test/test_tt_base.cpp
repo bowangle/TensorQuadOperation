@@ -598,6 +598,39 @@ void test_tt(const std::string& name, const std::string& filename, int n_points 
                   << "\n";
     }
 
+    // -------------------------------------------------------
+    // 19. compute_list_chi
+    // -------------------------------------------------------
+    {
+        TT<T> tt2(filename);
+        auto chi_list = tt2.compute_list_chi();
+        std::cout << "[compute_list_chi]: ";
+        for (size_t i = 0; i < chi_list.size(); i++)
+            std::cout << chi_list[i] << (i + 1 < chi_list.size() ? " " : "");
+        std::cout << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 20. compute_nb_value_core
+    // -------------------------------------------------------
+    {
+        TT<T> tt2(filename);
+        auto nb = tt2.compute_nb_value_core();
+        std::cout << "[compute_nb_value_core]: ";
+        for (size_t i = 0; i < nb.size(); i++)
+            std::cout << nb[i] << (i + 1 < nb.size() ? " " : "");
+        std::cout << "\n";
+    }
+
+    // -------------------------------------------------------
+    // 21. compute_tot_nb_value
+    // -------------------------------------------------------
+    {
+        TT<T> tt2(filename);
+        auto tot = tt2.compute_tot_nb_value();
+        std::cout << "[compute_tot_nb_value]: " << tot << "\n";
+    }
+
     std::cout << "----------------------------------------\n";
     std::cout << "Total time for " << name << ": " << elapsed_ms(t_type) << " ms\n";
 }

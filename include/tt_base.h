@@ -155,13 +155,13 @@ class TT{
     }
 
     void compress_svd(RealScalar reltol = -1, int max_bond_dim = -1)
-        {
-            int old_w = (w == -1) ? 0 : w;  // capture before any shift
-            shift_w(0); // (does the QR sweep to set canonical center at 0. After it, the SVD trucation is correct.)
-            _sweep(MatSVDFixedTol<T>{reltol, max_bond_dim}); // truncation is valid.
-            w = 0;
-            shift_w(old_w);
-        }
+    {
+        int old_w = (w == -1) ? 0 : w;  // capture before any shift
+        shift_w(0); // (does the QR sweep to set canonical center at 0. After it, the SVD trucation is correct.)
+        _sweep(MatSVDFixedTol<T>{reltol, max_bond_dim}); // truncation is valid.
+        w = 0;
+        shift_w(old_w);
+    }
 
     void _left_canonify_k(int k, bool compress = false)
     {
@@ -487,5 +487,33 @@ class TT{
             results.push_back(eval(pt));
         return results;
     } 
+
+    // Compute the list of bond dimension: (padded 1-chi1-chi2-1) for a tt of len 3)
+    std::vector<int> compute_list_chi() const {
+        std::vector<int> chi;
+        chi.reserve(nBit + 1);
+        chi.push_back(1);  // left boundary
+        for (int i = 0; i < nBit; i++)
+            chi.push_back(static_cast<int>(core[i].n_right));
+        return chi;
+    }
+
+    // Number of values in each core: n_left * n_phys * n_right per core
+    std::vector<Eigen::Index> compute_nb_value_core() const {
+        std::vector<Eigen::Index> nb;
+        nb.reserve(nBit);
+        for (int i = 0; i < nBit; i++)
+            nb.push_back(core[i].n_left * core[i].n_phys * core[i].n_right);
+        return nb;
+    }
+
+    // Total number of values across all cores
+    Eigen::Index compute_tot_nb_value() const {
+        Eigen::Index tot = 0;
+        for (int i = 0; i < nBit; i++)
+            tot += core[i].n_left * core[i].n_phys * core[i].n_right;
+        return tot;
+    }
+
 };
 
