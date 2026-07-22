@@ -784,6 +784,44 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
                   << "\n";
     }
 
+    // -------------------------------------------------------
+    // 27. Save / reload roundtrip (f1)
+    // -------------------------------------------------------
+    {
+        // use w_=-1 to avoid canonicalisation and numerical due to it. The weight should not change at all.
+        MPS<cScalar> mps_f1(filename_1 + ".tt", /*max_bond_dim_=*/0, /*reltol_=*/-1, /*w_=*/-1); // with w_=-1, no canonicalisation
+
+        auto t0 = now();
+        std::string tmp_prefix = filename_1 + "_saved";
+        mps_f1.save(tmp_prefix);
+        MPS<cScalar> reloaded(tmp_prefix + ".tt", /*max_bond_dim_=*/0, /*reltol_=*/-1, /*w_=*/-1); // with w_=-1, no canonicalisation
+        std::cout << "[save+reload] (" << elapsed_ms(t0) << " ms)\n";
+
+        // Compare cores element-by-element
+        auto const& orig = mps_f1.get_core();
+        auto const& reload = reloaded.get_core();
+        if (orig.size() != reload.size())
+        {
+            std::cerr << "  FAILED [save+reload]: core count mismatch "
+                      << orig.size() << " vs " << reload.size() << "\n";
+        }
+        else
+        {
+            Real max_diff = Real(0);
+            for (size_t k = 0; k < orig.size(); k++)
+            {
+                Real d = (orig[k].flatten_as_matrix2_const()
+                        - reload[k].flatten_as_matrix2_const()).norm();
+                if (d > max_diff) max_diff = d;
+            }
+            std::cout << "  max core diff = " << to_double<Real>(max_diff) << "\n";
+            if (max_diff > default_tol<cScalar>())
+                std::cerr << "  WARNING [save+reload]: core mismatch above tol!\n";
+            else
+                std::cout << "  [save+reload] cores preserved OK\n";
+        }
+    }
+
     std::cout << "----------------------------------------\n";
     std::cout << "Total time for " << name << ": " << elapsed_ms(t_type) << " ms\n";
 }

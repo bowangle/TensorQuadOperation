@@ -353,6 +353,45 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
         check("mpo_f2 @ mps_f2", mpo_f2_mps_f2, ref_f2f2);
     }
 
+    // -------------------------------------------------------
+    // Test 4: Save / reload roundtrip (mpo_f1)
+    // -------------------------------------------------------
+    {
+        // use w_=-1 to avoid canonicalisation and numerical drift from it
+        MPO<cScalar> mpo_tmp = MPO<cScalar>::from_mps(
+            MPS<cScalar>(filename_1 + ".tt", /*max_bond_dim_=*/0, /*reltol_=*/-1, /*w_=*/-1));
+
+        auto t0 = now();
+        std::string tmp_prefix = filename_1 + "_mpo_saved";
+        mpo_tmp.save(tmp_prefix);
+        MPO<cScalar> reloaded(tmp_prefix + ".tt", /*max_bond_dim_=*/0, /*reltol_=*/-1, /*w_=*/-1);
+        std::cout << "[save+reload MPO] (" << elapsed_ms(t0) << " ms)\n";
+
+        // Compare cores element-by-element
+        auto const& orig = mpo_tmp.get_core();
+        auto const& reload = reloaded.get_core();
+        if (orig.size() != reload.size())
+        {
+            std::cerr << "  FAILED [save+reload MPO]: core count mismatch "
+                      << orig.size() << " vs " << reload.size() << "\n";
+        }
+        else
+        {
+            Real max_diff = Real(0);
+            for (size_t k = 0; k < orig.size(); k++)
+            {
+                Real d = (orig[k].flatten_as_matrix2_const()
+                        - reload[k].flatten_as_matrix2_const()).norm();
+                if (d > max_diff) max_diff = d;
+            }
+            std::cout << "  max core diff = " << to_double<Real>(max_diff) << "\n";
+            if (max_diff > Real(0))
+                std::cerr << "  WARNING [save+reload MPO]: core mismatch (diff > 0)!\n";
+            else
+                std::cout << "  [save+reload MPO] cores preserved OK\n";
+        }
+    }
+
     std::cout << name << " done in " << elapsed_ms(t_type) << " ms)\n";
 }
 

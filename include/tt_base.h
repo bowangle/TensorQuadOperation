@@ -50,6 +50,7 @@ class TT{
         max_bond_dim_param(max_bond_dim_),
         reltol_param(reltol_)
     {
+        // initialise w correctly
         _initialize_w(w_);
     }
 
@@ -68,6 +69,11 @@ class TT{
 
     VecTT get_core(){
         return core;
+    }
+
+    void save(const std::string& file_prefix) const
+    {
+        save_Tensor3D_to_arma(core, file_prefix + ".tt");
     }
 
     // Return the shape of each tensor as a vector of tuples (n_left, n_phys, n_right)
