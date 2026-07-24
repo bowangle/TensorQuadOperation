@@ -161,7 +161,7 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
         points = mps_f1.generate_points(n_points);
 
         for (int i=0; i< n_points; i++){
-            point_ref.push_back(grid_1.id_to_coord(MultiIndex(points[i])));
+            point_ref.push_back(grid_1.id_to_coord(points[i]));
             value_ref_f1.push_back(function_1<cScalar>(point_ref[i]));
             value_ref_f2.push_back(function_2<cScalar>(point_ref[i]));
         }
