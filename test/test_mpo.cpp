@@ -4,8 +4,7 @@
 #include "mps_base.h"
 #include "mpo_base.h"
 
-#include "runner.h"
-#include "grid.h"
+#include "xf-qd-runner.hpp"
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
@@ -81,41 +80,42 @@ void print_shape(const TT<T>& tt, const std::string& name)
     std::cout << name << " chi: " << tt.get_chi() << "\n";
 }
 
-template<typename Scalar>  // T is a scalar
+template<typename Scalar>
 void do_save_TCI(
-    Scalar a_1,
-    Scalar b_1,
-    Scalar c0,
+    typename Eigen::NumTraits<Scalar>::Real a_1,
+    typename Eigen::NumTraits<Scalar>::Real b_1,
+    typename Eigen::NumTraits<Scalar>::Real c0,
     int nBit,
-    std::function<std::complex<Scalar>(Scalar)> function_to_tci,
+    std::function<Scalar(typename Eigen::NumTraits<Scalar>::Real)> function_to_tci,
     int n_iter,
-    bool do_cache,
+    const std::string& log_filename,
     const std::string& filename,
     int nb_point_out){
-    QTGrid<Scalar, long long> grid(a_1, b_1, nBit);
-    TCI_param tci_param = TCI_param(grid.get_nBits(), n_iter, do_cache);
+    using Real = typename Eigen::NumTraits<Scalar>::Real;
+    QTGrid<Real, long long> grid(a_1, b_1, nBit);
 
-    auto logger = spdlog::get("test_file_logger");
+    std::vector<int> pivot1 = grid.coord_to_id(c0);
+
+    TCI2_1D_runner_param<Scalar> tci_param(nBit, n_iter, 100,
+        {.pivot1 = pivot1, .fullPiv = true, .cache = CacheLevel::runner});
+
+    std::string logger_name = "logger_" + log_filename;
+    auto logger = spdlog::get(logger_name);
     if (!logger)
     {
-        logger = spdlog::basic_logger_mt("test_file_logger", "test/output/file.log");
+        logger = spdlog::basic_logger_mt(logger_name, "test/output/" + log_filename);
     }
 
-    TCI_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
+    TCI2_1D_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
 
-    std::vector<Scalar> v = {};
-    std::vector<Scalar> E_discontinuity = {};
+    std::vector<Real> additional_pivot = {};
 
     tci_runner.fit(
-        c0,                 // E_init
-        v,                  // additional pivot, not supported
+        additional_pivot,
         true,               // verbose
         true,               // save
         filename,           // file_prefix (path+prefix) to save
-        nb_point_out,       // nb_point to test error
-        E_discontinuity,    // point discontinuity to store
-        grid.get_a(),       // grid minimal point
-        grid.get_b()        // grid maximal point
+        nb_point_out        // nb_point to test error
     );
 }
 
@@ -404,12 +404,12 @@ int main()
 
     // TCI the two function in float128
     {
-        using scalar_type = float128;
-        using complex_type = Cfloat128;
+        using scalar_type = Cfloat128;
+        using real_type = float128;
 
-        scalar_type a_1 = -2.0;
-        scalar_type b_1 = 10.0;
-        scalar_type c_0 = 0.0;
+        real_type a_1 = -2.0;
+        real_type b_1 = 10.0;
+        real_type c_0 = 0.0;
 
         int nBit = 30;
         int n_iter = 15;
@@ -420,9 +420,9 @@ int main()
             b_1,
             c_0,
             nBit,
-            function_1<complex_type>,
+            function_1<scalar_type>,
             n_iter,
-            true,
+            "mpo_f1.log",
             file_mps_f1,
             nb_point_out);
         
@@ -431,9 +431,9 @@ int main()
             b_1,
             c_0,
             nBit,
-            function_2<complex_type>,
+            function_2<scalar_type>,
             n_iter,
-            true,
+            "mpo_f2.log",
             file_mps_f2,
             nb_point_out);
     }

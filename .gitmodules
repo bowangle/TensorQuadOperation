@@ -1,4 +1,4 @@
-[submodule "extern/tci_quad"]
-	path = extern/tci_quad
-	url = https://github.com/bowangle/tci_quad.git
+[submodule "extern/xfac_quad_runner"]
+	path = extern/xfac_quad_runner
+	url = https://github.com/bowangle/xfac_quad_runner.git
 	ignore = dirty
