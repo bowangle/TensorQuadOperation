@@ -97,16 +97,13 @@ class TT{
 
     T eval(std::vector<int> const& id) const
     {
-        if (static_cast<int>(id.size()) != nBit)
-            throw std::invalid_argument("TT::eval: id.size() != nBit");
-
-        // start with 1x1 identity
-        MatrixX prod = MatrixX::Identity(1, 1);
-
-        for (int k = 0; k < nBit; k++)
-            prod = prod * core[k].phys_const(id[k]);  // (1 x n_left) * (n_left x n_right)
-
-        return prod(0, 0);
+        if (int(id.size()) != nBit) throw std::invalid_argument("TT::eval: id.size() != nBit");
+        MatrixX a = MatrixX::Identity(1, 1), b;
+        for (int k = 0; k < nBit; k++) {
+            b.noalias() = a * core[k].phys_const(id[k]);
+            a.swap(b);
+        }
+        return a(0, 0);
     }
 
     // =============================================================
@@ -487,12 +484,12 @@ class TT{
     // Evaluate the TT at a list of points
     std::vector<T> eval_list(std::vector<std::vector<int>> const& points) const
     {
-        std::vector<T> results;
-        results.reserve(points.size());
-        for (auto const& pt : points)
-            results.push_back(eval(pt));
+        std::vector<T> results(points.size());          // pre-size, no push_back
+        #pragma omp parallel for schedule(static)
+        for (std::ptrdiff_t i = 0; i < std::ptrdiff_t(points.size()); ++i)
+            results[i] = eval(points[i]);
         return results;
-    } 
+    }
 
     // Compute the list of bond dimension: (padded 1-chi1-chi2-1) for a tt of len 3)
     std::vector<int> compute_list_chi() const {
