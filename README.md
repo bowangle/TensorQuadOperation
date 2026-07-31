@@ -20,7 +20,7 @@ The library provides construction, canonicalisation, compression, arithmetic, an
 ### Step 1 – Clone
 
 ```bash
-git clone <repo-url> TensorQuadOperation
+git clone https://github.com/bowangle/TensorQuadOperation.git
 cd TensorQuadOperation
 ```
 
