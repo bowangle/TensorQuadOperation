@@ -166,9 +166,6 @@ public:
         // keep in mind the old position of the canonical center
         int w0_mps = other.get_w();
 
-        // Initial guess for "optimize", captured BEFORE any shifting
-        MPS<T> prev = (previous != nullptr) ? *previous : other;
-
         RealScalar reltol   = std::max(this->get_reltol(), other.get_reltol());
         int max_bond_dim    = _merged_max_bond_dim(other);
         VecTT core_out;
@@ -186,11 +183,32 @@ public:
             else if (method == "qrsvd")
                 core_out = utc::qrsvd_contract_mpo_mps<T>(this->core,
                                                     other_mps.get_core());
-            else if (method == "optimize")
-                core_out = utc::optimize_dm_generic<T>(prev.get_core(),
-                                                this->core, other_mps.get_core(),
-                                                reltol, max_bond_dim,
-                                                order, n_sweeps);
+            else if (method == "optimize") {                                                       
+                if (previous != nullptr) {                                                         
+                    MPS<T> prev(*previous);                                                        
+                    prev.shift_w(0);                                                               
+                                                                                                    
+                    core_out = utc::optimize_dm_generic<T>(                                        
+                        prev.get_core(),                                                           
+                        this->core,                                                                
+                        other_mps.get_core(),                                                      
+                        reltol,                                                                    
+                        max_bond_dim,                                                              
+                        order,                                                                     
+                        n_sweeps);                                                                 
+                } else {                                                                           
+                    // other_mps was already canonicalized with shift_w(0).                        
+                    core_out = utc::optimize_dm_generic<T>(                                        
+                        other_mps.get_core(),                                                      
+                        this->core,                                                                
+                        other_mps.get_core(),                                                      
+                        reltol,                                                                    
+                        max_bond_dim,                                                              
+                        order,                                                                     
+                        n_sweeps);                                                                 
+                }                                                                                  
+            }                               
+                
             else
                 throw std::invalid_argument("MPO::_mul: method not recognized");
         }
