@@ -210,15 +210,13 @@ std::vector<Tensor3D<T>> zip_up_mpo_mps(
     return res;
 }
 
-// MPO @ MPS via exact contraction with QR re-orthogonalization
-// ("zip-up like" forward half-sweep, no truncation).
+// MPO @ MPS via exact contraction with QR re-orthogonalization.
 //
-// Same left-to-right sweep as zip_up_mpo_mps, but each site matrix is
-// factored with a reduced QR instead of a truncated SVD, so the
-// contraction is EXACT: bond dimensions grow as chi_mps * chi_mpo.
-// The "svd" half of the name happens downstream — the caller
-// (MPO::_mul with method "qrsvd") compresses during the shift back to
-// the original working site (shift_w(w0, compress=true)).
+// The left-to-right sweep is untruncated: bond dimensions may grow as
+// chi_mps * chi_mpo. The caller performs the SVD half of "qrsvd" as a
+// complete compressed right-to-left sweep, so reltol / max_bond_dim
+// are applied once to every internal bond before the canonical center
+// is restored.
 //
 // Assumes both inputs are left-canonical. Returns MPS cores with
 // canonical center at the LAST site: all cores except the last come

@@ -184,7 +184,8 @@ public:
                 core_out = utc::zip_up_mpo_mps<T>(this->core, other_mps.get_core(),
                                             reltol, max_bond_dim);
             else if (method == "qrsvd")
-                core_out = utc::qrsvd_contract_mpo_mps<T>(this->core, other_mps.get_core());
+                core_out = utc::qrsvd_contract_mpo_mps<T>(this->core,
+                                                    other_mps.get_core());
             else if (method == "optimize")
                 core_out = utc::optimize_dm_generic<T>(prev.get_core(),
                                                 this->core, other_mps.get_core(),
@@ -198,9 +199,21 @@ public:
         int w_ = (method != "optimize") ? nBit_ - 1 : 0;
         MPS<T> res(std::move(core_out), max_bond_dim, reltol, w_);
 
-        // move the canonical center.
-        if (w0_mps != -1)
+        // qrsvd's forward contraction is exact QR. Sweep all the way
+        // back from the last site to site 0 with SVD compression so
+        // reltol / max_bond_dim are applied to every internal bond,
+        // including when the requested center is already the last site.
+        // Restore the center afterward with exact QR moves to avoid a
+        // second truncation of any bond.
+        if (method == "qrsvd") {
+            res.shift_w(0, /*compress=*/true);
+            int target_w = (w0_mps == -1) ? nBit_ - 1 : w0_mps;
+            if (target_w != 0)
+                res.shift_w(target_w, /*compress=*/false);
+        }
+        else if (w0_mps != -1) {
             res.shift_w(w0_mps, /*compress=*/true);
+        }
 
         return res;
     }
