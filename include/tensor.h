@@ -1,4 +1,5 @@
 #pragma once
+#include "type_double_double.h"
 #include "matrix.h"
 #include <vector>
 #include <iostream>
@@ -6,6 +7,8 @@
 #include <limits>
 #include <complex>
 #include <fstream>
+#include <sstream>
+#include <type_traits>
 #include <Eigen/Dense>
 // Class for the Tensor object
 template<typename T>
@@ -269,6 +272,50 @@ std::vector<Tensor3D<T>> load_vector_tensor(std::istream& in)
         }
         Xs.push_back(std::move(X));
     }
+
+    if constexpr (std::is_same_v<RealT, dd_128>)
+    {
+        // Files written by the dd_128-aware xfac loader retain the legacy
+        // decimal cores above and append each value's exact two-double
+        // representation. Legacy files simply reach EOF here.
+        std::string marker;
+        if (in >> marker && marker == "XFQD_DD128_EXACT_V1")
+        {
+            std::size_t exact_core_count;
+            if (!(in >> exact_core_count) || exact_core_count != Xs.size())
+                throw std::runtime_error("Invalid dd_128 exact TT core count");
+
+            for (std::size_t t = 0; t < Xs.size(); ++t)
+            {
+                Eigen::Index n_left, n_phys, n_right;
+                if (!(in >> n_left >> n_phys >> n_right))
+                    throw std::runtime_error("Invalid dd_128 exact TT dimensions");
+
+                Tensor3D<T>& X = Xs[t];
+                if (n_left != X.n_left || n_phys != X.n_phys || n_right != X.n_right)
+                    throw std::runtime_error(
+                        "dd_128 exact TT dimensions do not match legacy data");
+
+                for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
+                {
+                    for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
+                    {
+                        for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
+                        {
+                            double re_hi, re_lo, im_hi, im_lo;
+                            if (!(in >> re_hi >> re_lo >> im_hi >> im_lo))
+                                throw std::runtime_error("Invalid dd_128 exact TT value");
+
+                            RealT re(dd_real(re_hi, re_lo));
+                            RealT im(dd_real(im_hi, im_lo));
+                            X(id_left, id_phys, id_right) = T(re, im);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     return Xs;
 }
 template<typename T>
@@ -314,6 +361,36 @@ void save_Tensor3D_to_arma(
         }
         out << "\n";
     }
+
+    if constexpr (std::is_same_v<RealT, dd_128>)
+    {
+        // Keep the legacy decimal TT readable by existing loaders, then append
+        // the exact hi/lo representation understood by dd_128-aware loaders.
+        out << "XFQD_DD128_EXACT_V1\n";
+        out << Xs.size() << "\n";
+        out << std::scientific
+            << std::setprecision(std::numeric_limits<double>::max_digits10);
+
+        for (const Tensor3D<T>& X : Xs)
+        {
+            out << X.n_left << " " << X.n_phys << " " << X.n_right << "\n";
+            for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
+            {
+                for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
+                {
+                    for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
+                    {
+                        const auto& z = X(id_left, id_phys, id_right);
+                        const RealT re = z.real();
+                        const RealT im = z.imag();
+                        out << re.x[0] << " " << re.x[1] << " "
+                            << im.x[0] << " " << im.x[1] << " ";
+                    }
+                    out << "\n";
+                }
+            }
+        }
+    }
 }
 template<typename T>
 void save_Tensor3D_to_arma(std::vector<Tensor3D<T>> cores, const std::string& filename)
@@ -348,34 +425,8 @@ template<typename T>
 std::ostream& operator<<(std::ostream& out,
                          const std::vector<Tensor3D<T>>& Xs)
 {
-    // Same Armadillo-compatible order as save_Tensor3D_to_arma,
-    // so streamed output can be read back by load_vector_tensor.
-    out << Xs.size() << "\n";
-    for (const auto& X : Xs)
-    {
-        out << "ARMA_CUB_TXT_FC016\n";
-        out << X.n_left << " "
-            << X.n_phys << " "
-            << X.n_right << "\n";
-        using RealT = typename T::value_type;
-        out << std::scientific;
-        out << std::setprecision(std::numeric_limits<RealT>::digits10 + 5);
-        for (Eigen::Index id_right = 0; id_right < X.n_right; ++id_right)
-        {
-            for (Eigen::Index id_left = 0; id_left < X.n_left; ++id_left)
-            {
-                for (Eigen::Index id_phys = 0; id_phys < X.n_phys; ++id_phys)
-                {
-                    const auto& z = X(id_left, id_phys, id_right);
-                    out << "("
-                        << z.real() << ","
-                        << z.imag()
-                        << ") ";
-                }
-                out << "\n";
-            }
-        }
-        out << "\n";
-    }
+    // Keep streamed serialization identical to TT::save, including the exact
+    // dd_128 trailer when required.
+    save_Tensor3D_to_arma(out, Xs);
     return out;
 }
