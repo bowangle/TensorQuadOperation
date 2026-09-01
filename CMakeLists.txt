@@ -18,8 +18,9 @@ if(NOT TARGET xf_qd_runner_deps)
 endif()
 
 # ---- own paths ----------------------------------------------------------------
-set(TQ_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set(TQ_TEST_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/test)
+set(TQ_INCLUDE_DIR       ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(TQ_TEST_DIR          ${CMAKE_CURRENT_SOURCE_DIR}/test)
+set(CATCH2_INCLUDE_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/extern/Catch2/single_include)
 
 # ---- interface target: carries our headers + transitive deps ------------------
 add_library(tensorquad_deps INTERFACE)
@@ -41,8 +42,17 @@ add_library(tensorquad_testing INTERFACE)
 target_include_directories(tensorquad_testing INTERFACE
     ${TQ_TEST_DIR})
 
+target_include_directories(tensorquad_testing SYSTEM INTERFACE
+    ${CATCH2_INCLUDE_DIR})
+
 # ---- tests (leaf targets: nothing may ever depend on these) -------------------
 if(TQ_BUILD_TESTS)
+    if(NOT EXISTS ${CATCH2_INCLUDE_DIR}/catch2/catch.hpp)
+        message(FATAL_ERROR
+            "Catch2 not found at ${CATCH2_INCLUDE_DIR}.\n"
+            "Run: git submodule update --init --recursive")
+    endif()
+
     enable_testing()
 
     # One entry per test/<name>.cpp -> target tq_test_<name>
@@ -54,7 +64,8 @@ if(TQ_BUILD_TESTS)
         test_tt_base
         test_mps
         test_compress_svd
-        test_mpo)
+        test_mpo
+        test_quantics_integrator)
 
     foreach(_name IN LISTS _tq_tests)
         add_executable(tq_test_${_name} test/${_name}.cpp)
