@@ -7,6 +7,8 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -14,6 +16,8 @@
 
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
+#include <spdlog/logger.h>
+#include <spdlog/sinks/ostream_sink.h>
 
 #include "quantics_integrator.hpp"
 
@@ -192,6 +196,45 @@ void check_complex_type()
 }
 
 } // namespace
+
+TEST_CASE("quantics integrator forwards fit diagnostics to spdlog",
+          "[integrator][logging]")
+{
+    using Complex = std::complex<double>;
+    using Integrator = QuanticsIntegrator1D<Complex>;
+
+    constexpr int nbits = 8;
+    typename Integrator::Grid grid(0.0, 1.0, nbits);
+    TCI2_1D_runner_opts<Complex> runner_options;
+    runner_options.reltol = 1e-12;
+    runner_options.pivot1 = grid.coord_to_id(0.5);
+    runner_options.fullPiv = true;
+    typename Integrator::RunnerParam parameters(
+        nbits, /*nb_iter=*/2, /*bondDim=*/8, runner_options);
+
+    typename Integrator::FitOptions fit_options;
+    fit_options.verbose = false;
+    fit_options.nb_point_res = 16;
+
+    std::ostringstream log_output;
+    auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_output);
+    auto logger = std::make_shared<spdlog::logger>(
+        "quantics_integrator_test", std::move(sink));
+    logger->set_pattern("%v");
+
+    TemporaryFitFiles files;
+    const auto integrator = Integrator::fit(
+        std::move(grid),
+        [](double x) -> Complex { return Complex(x, 0.0); },
+        std::move(parameters), files.prefix(), std::move(fit_options), logger);
+    logger->flush();
+
+    const std::string messages = log_output.str();
+    REQUIRE(messages.find("========== FIT PARAMETERS ==========") !=
+            std::string::npos);
+    REQUIRE(messages.find("sweep 1 |pivot error|") != std::string::npos);
+    REQUIRE(messages.find("Max bond dim:") != std::string::npos);
+}
 
 TEST_CASE("quantics integrator supports all real scalar types", "[integrator]")
 {

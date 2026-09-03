@@ -7,10 +7,12 @@
 #include <xf-quad-param.hpp>
 
 #include <Eigen/Dense>
+#include <spdlog/logger.h>
 
 #include <cstddef>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -30,6 +32,8 @@
 /// 5. FitOptions options (optional)
 ///      Additional pivots, verbosity, error-sampling count, and known
 ///      discontinuities.
+/// 6. std::shared_ptr<spdlog::logger> logger (optional)
+///      Logger forwarded to TCI2_1D_Runner for fit diagnostics.
 ///
 /// After fitting, call integrate() for the full domain or
 /// integrate({begin, end}) for a half-open grid-index range.
@@ -47,6 +51,7 @@ public:
     using State       = MPS<Scalar>;
     using Function    = std::function<Scalar(RealScalar)>;
     using RunnerParam = TCI2_1D_runner_param<Scalar>;
+    using LoggerPtr   = std::shared_ptr<spdlog::logger>;
     using MatrixX     = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic,
                                       Eigen::ColMajor>;
 
@@ -91,7 +96,8 @@ public:
                                     Function function,
                                     RunnerParam parameters,
                                     const std::string& save_prefix,
-                                    FitOptions options = {})
+                                    FitOptions options = {},
+                                    LoggerPtr logger = nullptr)
     {
         if (!function)
             throw std::invalid_argument(
@@ -116,7 +122,8 @@ public:
             const RealScalar reltol = parameters.reltol;
             const int max_bond_dim = parameters.bondDim;
             TCI2_1D_Runner<Scalar, Sint> runner(
-                std::move(grid), std::move(parameters), std::move(function));
+                std::move(grid), std::move(parameters), std::move(function),
+                std::move(logger));
 
             runner.fit(options.additional_pivots,
                        options.verbose,
