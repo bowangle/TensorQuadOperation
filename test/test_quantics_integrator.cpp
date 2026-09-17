@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -196,6 +197,245 @@ void check_complex_type()
 }
 
 } // namespace
+
+TEST_CASE("direct and batched range sums match explicit MPS values",
+          "[integrator][range]")
+{
+    using Complex = std::complex<double>;
+    using Integrator = QuanticsIntegrator1D<Complex>;
+    using Sint = util::i128;
+
+    constexpr int nbits = 5;
+    constexpr int point_count = 1 << nbits;
+    const std::vector<Eigen::Index> bonds = {1, 2, 3, 2, 2, 1};
+    std::vector<Tensor3D<Complex>> cores;
+    cores.reserve(nbits);
+    for (int site = 0; site < nbits; ++site) {
+        Tensor3D<Complex> core(
+            bonds[static_cast<std::size_t>(site)],
+            2,
+            bonds[static_cast<std::size_t>(site + 1)]);
+        for (Eigen::Index left = 0; left < core.n_left; ++left) {
+            for (Eigen::Index bit = 0; bit < core.n_phys; ++bit) {
+                for (Eigen::Index right = 0; right < core.n_right; ++right) {
+                    const double base =
+                        0.03 * (site + 1) + 0.07 * (left + 1)
+                        + 0.05 * (bit + 1) + 0.02 * (right + 1);
+                    core(left, bit, right) =
+                        Complex(base, 0.1 * base + 0.003 * (bit - left));
+                }
+            }
+        }
+        cores.push_back(std::move(core));
+    }
+
+    typename Integrator::Grid grid(0.0, 1.0, nbits);
+    typename Integrator::State values(
+        std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1.0,
+        /*working_site=*/-1);
+    const Integrator integrator(std::move(grid), std::move(values));
+
+    std::vector<Complex> prefix(point_count + 1, Complex(0.0));
+    for (int index = 0; index < point_count; ++index) {
+        std::vector<int> bits(nbits);
+        for (int site = 0; site < nbits; ++site)
+            bits[static_cast<std::size_t>(site)] = (index >> site) & 1;
+        prefix[static_cast<std::size_t>(index + 1)] =
+            prefix[static_cast<std::size_t>(index)]
+            + integrator.values().eval(bits);
+    }
+
+    std::vector<typename Integrator::IndexRange> ranges;
+    std::vector<Complex> expected;
+    for (int begin = 0; begin <= point_count; ++begin) {
+        for (int end = begin; end <= point_count; ++end) {
+            const typename Integrator::IndexRange range{
+                Sint(begin), Sint(end)};
+            const Complex answer =
+                prefix[static_cast<std::size_t>(end)]
+                - prefix[static_cast<std::size_t>(begin)];
+            ranges.push_back(range);
+            expected.push_back(answer);
+
+            const Complex direct = integrator.sum_v2(range);
+            REQUIRE(std::abs(direct - answer)
+                    < 1e-12 * (1.0 + std::abs(answer)));
+
+            const Complex integrated = integrator.integrate(range);
+            const Complex expected_integral =
+                answer * integrator.grid().delta_volume();
+            REQUIRE(std::abs(integrated - expected_integral)
+                    < 1e-12 * (1.0 + std::abs(expected_integral)));
+        }
+    }
+
+    const std::vector<Complex> batched = integrator.sum_batch_v2(ranges);
+    REQUIRE(batched.size() == expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        REQUIRE(std::abs(batched[index] - expected[index])
+                < 1e-12 * (1.0 + std::abs(expected[index])));
+    }
+
+    const std::vector<Complex> integrated_batch =
+        integrator.integrate_lrange(ranges);
+    REQUIRE(integrated_batch.size() == expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        const Complex expected_integral =
+            expected[index] * integrator.grid().delta_volume();
+        REQUIRE(std::abs(integrated_batch[index] - expected_integral)
+                < 1e-12 * (1.0 + std::abs(expected_integral)));
+    }
+}
+
+TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
+          "[integrator][range][benchmark]")
+{
+    using Complex = std::complex<double>;
+    using Integrator = QuanticsIntegrator1D<Complex>;
+    using Clock = std::chrono::steady_clock;
+
+    constexpr int nbits = 49;
+    typename Integrator::Grid grid(0.0, 1.0, nbits);
+    TCI2_1D_runner_opts<Complex> runner_options;
+    runner_options.reltol = 1e-12;
+    runner_options.pivot1 = grid.coord_to_id(0.37123456789);
+    runner_options.fullPiv = true;
+    runner_options.cache = CacheLevel::runner;
+    typename Integrator::RunnerParam parameters(
+        nbits, /*nb_iter=*/60, /*bondDim=*/64, runner_options);
+
+    typename Integrator::FitOptions fit_options;
+    fit_options.additional_pivots = {0.11, 0.23, 0.37, 0.53, 0.71, 0.89};
+    fit_options.verbose = false;
+    fit_options.nb_point_res = 256;
+
+    constexpr double pi = 3.141592653589793238462643383279502884;
+    auto function = [pi](double x) -> Complex {
+        double value = 0.0;
+        for (int mode = 0; mode < 10; ++mode) {
+            const double cosine_frequency = double(mode + 1);
+            const double sine_frequency = double(1000 + 100 * mode);
+            const double coefficient = 0.7 + 0.03 * mode;
+            value += coefficient
+                   * std::cos(2.0 * pi * cosine_frequency * x)
+                   * std::sin(2.0 * pi * sine_frequency * x);
+        }
+        return Complex(value, 0.0);
+    };
+
+    TemporaryFitFiles files;
+    const Integrator integrator = Integrator::fit(
+        std::move(grid), std::move(function), std::move(parameters),
+        files.prefix(), std::move(fit_options));
+
+    const Eigen::Index fitted_rank = integrator.values().get_chi();
+    std::cout << "trigonometric benchmark fitted rank = "
+              << fitted_rank << '\n';
+    REQUIRE(fitted_rank >= 20);
+
+    const util::i128 point_count = integrator.grid().get_N();
+    constexpr int range_count = 100;
+    std::vector<typename Integrator::IndexRange> ranges;
+    ranges.reserve(range_count);
+    for (int index = 1; index <= range_count; ++index) {
+        const util::i128 end =
+            index == range_count
+                ? point_count
+                : (point_count * util::i128(index)) /
+                      util::i128(range_count);
+        ranges.push_back({util::i128(0), end});
+    }
+
+    std::vector<Complex> old_sum_results;
+    old_sum_results.reserve(ranges.size());
+    const Complex cell_volume(integrator.grid().delta_volume(), 0.0);
+    const auto old_sum_start = Clock::now();
+    for (const auto& range : ranges)
+        old_sum_results.push_back(integrator.sum(range) * cell_volume);
+    const auto old_sum_end = Clock::now();
+
+    std::vector<Complex> individual_results;
+    individual_results.reserve(ranges.size());
+    const auto individual_start = Clock::now();
+    for (const auto& range : ranges)
+        individual_results.push_back(integrator.integrate(range));
+    const auto individual_end = Clock::now();
+
+    const auto batch_start = Clock::now();
+    const std::vector<Complex> batch_results =
+        integrator.integrate_lrange(ranges);
+    const auto batch_end = Clock::now();
+
+    Complex full_integrate_checksum(0.0);
+    const auto full_integrate_start = Clock::now();
+    for (int repetition = 0; repetition < range_count; ++repetition)
+        full_integrate_checksum += integrator.integrate();
+    const auto full_integrate_end = Clock::now();
+
+    Complex full_sum_checksum(0.0);
+    const auto full_sum_start = Clock::now();
+    for (int repetition = 0; repetition < range_count; ++repetition)
+        full_sum_checksum += integrator.sum();
+    const auto full_sum_end = Clock::now();
+
+    Complex full_sum_v2_checksum(0.0);
+    const auto full_sum_v2_start = Clock::now();
+    for (int repetition = 0; repetition < range_count; ++repetition)
+        full_sum_v2_checksum += integrator.sum_v2();
+    const auto full_sum_v2_end = Clock::now();
+
+    const double old_sum_ms =
+        std::chrono::duration<double, std::milli>(
+            old_sum_end - old_sum_start).count();
+    const double individual_ms =
+        std::chrono::duration<double, std::milli>(
+            individual_end - individual_start).count();
+    const double batch_ms =
+        std::chrono::duration<double, std::milli>(
+            batch_end - batch_start).count();
+    const double full_integrate_ms =
+        std::chrono::duration<double, std::milli>(
+            full_integrate_end - full_integrate_start).count();
+    const double full_sum_ms =
+        std::chrono::duration<double, std::milli>(
+            full_sum_end - full_sum_start).count();
+    const double full_sum_v2_ms =
+        std::chrono::duration<double, std::milli>(
+            full_sum_v2_end - full_sum_v2_start).count();
+    std::cout << std::setprecision(8)
+              << "100 old sum(range) integrations: " << old_sum_ms
+              << " ms\n"
+              << "100 individual integrate calls: " << individual_ms
+              << " ms\n"
+              << "one integrate_lrange call: " << batch_ms << " ms\n"
+              << "100 full-grid integrate() calls: " << full_integrate_ms
+              << " ms\n"
+              << "100 full-grid sum() calls: " << full_sum_ms
+              << " ms\n"
+              << "100 full-grid sum_v2() calls: " << full_sum_v2_ms
+              << " ms\n";
+    if (individual_ms > 0.0)
+        std::cout << "sum_v2 speedup over old sum: "
+                  << old_sum_ms / individual_ms << "x\n";
+    if (batch_ms > 0.0)
+        std::cout << "batch speedup over old sum: "
+                  << old_sum_ms / batch_ms << "x\n";
+
+    REQUIRE(std::abs(full_integrate_checksum
+                     - full_sum_checksum * cell_volume)
+            < 1e-10 * (1.0 + std::abs(full_integrate_checksum)));
+    REQUIRE(std::abs(full_sum_v2_checksum - full_sum_checksum)
+            < 1e-10 * (1.0 + std::abs(full_sum_checksum)));
+
+    REQUIRE(batch_results.size() == individual_results.size());
+    REQUIRE(old_sum_results.size() == individual_results.size());
+    for (std::size_t index = 0; index < batch_results.size(); ++index) {
+        REQUIRE(std::abs(individual_results[index] - old_sum_results[index])
+                < 1e-10 * (1.0 + std::abs(old_sum_results[index])));
+        REQUIRE(std::abs(batch_results[index] - old_sum_results[index])
+                < 1e-10 * (1.0 + std::abs(old_sum_results[index])));
+    }
+}
 
 TEST_CASE("quantics integrator forwards fit diagnostics to spdlog",
           "[integrator][logging]")

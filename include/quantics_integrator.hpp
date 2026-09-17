@@ -151,10 +151,29 @@ public:
 
     [[nodiscard]] Scalar integrate(IndexRange range) const
     {
-        return sum(range) * Scalar(grid_.delta_volume());
+        return sum_v2(range) * Scalar(grid_.delta_volume());
+    }
+
+    /// Integrate several half-open index ranges with the batched direct-sum
+    /// implementation. Results preserve the input range order.
+    [[nodiscard]] std::vector<Scalar> integrate_lrange(
+        const std::vector<IndexRange>& ranges) const
+    {
+        std::vector<Scalar> results = sum_batch_v2(ranges);
+        const Scalar cell_volume = Scalar(grid_.delta_volume());
+        for (Scalar& result : results)
+            result *= cell_volume;
+        return results;
     }
 
     [[nodiscard]] Scalar sum() const
+    {
+        return contract_full(values_);
+    }
+
+    /// Full-grid counterpart of the direct range-sum API. No binary boundary
+    /// processing is needed when every physical index is included.
+    [[nodiscard]] Scalar sum_v2() const
     {
         return contract_full(values_);
     }
@@ -167,6 +186,98 @@ public:
         if (range.begin == Sint(0) && range.end == grid_.get_N())
             return sum();
         return contract_full(restrict_to(range));
+    }
+
+    /// Sum a range directly from its binary boundaries, without constructing
+    /// an interval MPS or applying an MPO. Prefixes and suffixes are contracted
+    /// directly; an interior range is the difference of two prefix sums.
+    /// Complexity is O(nBits * chi^2).
+    [[nodiscard]] Scalar sum_v2(IndexRange range) const
+    {
+        validate_range(range);
+        if (range.begin == range.end)
+            return Scalar(0);
+
+        const auto free_left = make_free_left_environments();
+        if (range.begin == Sint(0))
+            return prefix_sum_v2(range.end, free_left);
+        if (range.end == grid_.get_N())
+            return suffix_sum_v2(range.begin, free_left);
+        return prefix_sum_v2(range.end, free_left) - prefix_sum_v2(range.begin, free_left);
+    }
+
+    /// Evaluate several range sums together. Boundary environments are stored
+    /// as matrix columns, so every tensor site is handled with matrix-matrix
+    /// products instead of one matrix-vector product per range. Prefixes and
+    /// suffixes are batched separately; interior ranges use two batched prefix
+    /// boundaries. Results preserve the input range order.
+    [[nodiscard]] std::vector<Scalar> sum_batch_v2(
+        const std::vector<IndexRange>& ranges) const
+    {
+        std::vector<Scalar> results(ranges.size(), Scalar(0));
+        if (ranges.empty())
+            return results;
+
+        struct BoundaryUse {
+            std::size_t result_index;
+            Scalar coefficient;
+        };
+
+        std::vector<Sint> prefix_boundaries;
+        std::vector<BoundaryUse> prefix_uses;
+        std::vector<Sint> suffix_boundaries;
+        std::vector<std::size_t> suffix_result_indices;
+        bool need_full_sum = false;
+
+        for (std::size_t index = 0; index < ranges.size(); ++index) {
+            const IndexRange range = ranges[index];
+            validate_range(range);
+            if (range.begin == range.end)
+                continue;
+            if (range.begin == Sint(0) && range.end == grid_.get_N()) {
+                need_full_sum = true;
+                continue;
+            }
+            if (range.begin == Sint(0)) {
+                prefix_boundaries.push_back(range.end);
+                prefix_uses.push_back({index, Scalar(1)});
+                continue;
+            }
+            if (range.end == grid_.get_N()) {
+                suffix_boundaries.push_back(range.begin);
+                suffix_result_indices.push_back(index);
+                continue;
+            }
+
+            prefix_boundaries.push_back(range.end);
+            prefix_uses.push_back({index, Scalar(1)});
+            prefix_boundaries.push_back(range.begin);
+            prefix_uses.push_back({index, Scalar(-1)});
+        }
+
+        const auto free_left = make_free_left_environments();
+        if (need_full_sum) {
+            const Scalar full_sum = free_left.back()(0, 0);
+            for (std::size_t index = 0; index < ranges.size(); ++index) {
+                if (ranges[index].begin == Sint(0)
+                    && ranges[index].end == grid_.get_N())
+                    results[index] = full_sum;
+            }
+        }
+
+        const auto prefix_values =
+            prefix_sums_batch_v2(prefix_boundaries, free_left);
+        for (std::size_t index = 0; index < prefix_values.size(); ++index) {
+            results[prefix_uses[index].result_index] +=
+                prefix_uses[index].coefficient * prefix_values[index];
+        }
+
+        const auto suffix_values =
+            suffix_sums_batch_v2(suffix_boundaries, free_left);
+        for (std::size_t index = 0; index < suffix_values.size(); ++index)
+            results[suffix_result_indices[index]] = suffix_values[index];
+
+        return results;
     }
 
     /// Return the sampled MPS multiplied pointwise by 1_[begin,end).
@@ -206,6 +317,167 @@ private:
             environment = (environment * transfer).eval();
         }
         return environment(0, 0);
+    }
+
+    /// free_left[p] sums all assignments of the p least-significant bits.
+    [[nodiscard]] std::vector<MatrixX> make_free_left_environments() const
+    {
+        const auto& cores = values_.get_core();
+        std::vector<MatrixX> free_left(cores.size() + 1);
+        free_left[0] = MatrixX::Identity(1, 1);
+        for (std::size_t site = 0; site < cores.size(); ++site) {
+            const MatrixX transfer = cores[site].phys_const(0) + cores[site].phys_const(1);
+            free_left[site + 1] = (free_left[site] * transfer).eval();
+        }
+        return free_left;
+    }
+
+    [[nodiscard]] Scalar prefix_sum_v2(
+        Sint boundary,
+        const std::vector<MatrixX>& free_left) const
+    {
+        if (boundary == Sint(0))
+            return Scalar(0);
+        if (boundary == grid_.get_N())
+            return free_left.back()(0, 0);
+
+        const auto& cores = values_.get_core();
+        MatrixX fixed_right = MatrixX::Identity(1, 1);
+        Scalar result = Scalar(0);
+        for (int site = static_cast<int>(cores.size()) - 1;
+             site >= 0;
+             --site) {
+            const bool bit =
+                ((boundary >> site) & Sint(1)) != Sint(0);
+            if (bit) {
+                result += (free_left[static_cast<std::size_t>(site)]
+                           * cores[static_cast<std::size_t>(site)].phys_const(0)
+                           * fixed_right)(0, 0);
+            }
+            fixed_right =
+                (cores[static_cast<std::size_t>(site)].phys_const(bit ? 1 : 0)
+                 * fixed_right).eval();
+        }
+        return result;
+    }
+
+    [[nodiscard]] Scalar suffix_sum_v2(
+        Sint boundary,
+        const std::vector<MatrixX>& free_left) const
+    {
+        if (boundary == Sint(0))
+            return free_left.back()(0, 0);
+        if (boundary == grid_.get_N())
+            return Scalar(0);
+
+        const auto& cores = values_.get_core();
+        MatrixX fixed_right = MatrixX::Identity(1, 1);
+        Scalar result = Scalar(0);
+        for (int site = static_cast<int>(cores.size()) - 1;
+             site >= 0;
+             --site) {
+            const bool bit =
+                ((boundary >> site) & Sint(1)) != Sint(0);
+            if (!bit) {
+                result += (free_left[static_cast<std::size_t>(site)]
+                           * cores[static_cast<std::size_t>(site)].phys_const(1)
+                           * fixed_right)(0, 0);
+            }
+            fixed_right =
+                (cores[static_cast<std::size_t>(site)].phys_const(bit ? 1 : 0)
+                 * fixed_right).eval();
+        }
+        // The branch contributions are strictly greater than the boundary;
+        // fixed_right is the value at the boundary itself.
+        return result + fixed_right(0, 0);
+    }
+
+    [[nodiscard]] std::vector<Scalar> prefix_sums_batch_v2(
+        const std::vector<Sint>& boundaries,
+        const std::vector<MatrixX>& free_left) const
+    {
+        std::vector<Scalar> results(boundaries.size(), Scalar(0));
+        if (boundaries.empty())
+            return results;
+
+        const auto& cores = values_.get_core();
+        const Eigen::Index count =
+            static_cast<Eigen::Index>(boundaries.size());
+        MatrixX fixed_right = MatrixX::Ones(1, count);
+
+        for (int site = static_cast<int>(cores.size()) - 1;
+             site >= 0;
+             --site) {
+            const auto& core = cores[static_cast<std::size_t>(site)];
+            const MatrixX next_zero =
+                (core.phys_const(0) * fixed_right).eval();
+            const MatrixX next_one =
+                (core.phys_const(1) * fixed_right).eval();
+            const MatrixX contributions =
+                (free_left[static_cast<std::size_t>(site)] * next_zero).eval();
+
+            MatrixX next(next_zero.rows(), count);
+            for (Eigen::Index column = 0; column < count; ++column) {
+                const bool bit =
+                    ((boundaries[static_cast<std::size_t>(column)] >> site)
+                     & Sint(1)) != Sint(0);
+                if (bit) {
+                    results[static_cast<std::size_t>(column)] +=
+                        contributions(0, column);
+                    next.col(column) = next_one.col(column);
+                } else {
+                    next.col(column) = next_zero.col(column);
+                }
+            }
+            fixed_right = std::move(next);
+        }
+        return results;
+    }
+
+    [[nodiscard]] std::vector<Scalar> suffix_sums_batch_v2(
+        const std::vector<Sint>& boundaries,
+        const std::vector<MatrixX>& free_left) const
+    {
+        std::vector<Scalar> results(boundaries.size(), Scalar(0));
+        if (boundaries.empty())
+            return results;
+
+        const auto& cores = values_.get_core();
+        const Eigen::Index count =
+            static_cast<Eigen::Index>(boundaries.size());
+        MatrixX fixed_right = MatrixX::Ones(1, count);
+
+        for (int site = static_cast<int>(cores.size()) - 1;
+             site >= 0;
+             --site) {
+            const auto& core = cores[static_cast<std::size_t>(site)];
+            const MatrixX next_zero =
+                (core.phys_const(0) * fixed_right).eval();
+            const MatrixX next_one =
+                (core.phys_const(1) * fixed_right).eval();
+            const MatrixX contributions =
+                (free_left[static_cast<std::size_t>(site)] * next_one).eval();
+
+            MatrixX next(next_zero.rows(), count);
+            for (Eigen::Index column = 0; column < count; ++column) {
+                const bool bit =
+                    ((boundaries[static_cast<std::size_t>(column)] >> site)
+                     & Sint(1)) != Sint(0);
+                if (bit) {
+                    next.col(column) = next_one.col(column);
+                } else {
+                    results[static_cast<std::size_t>(column)] +=
+                        contributions(0, column);
+                    next.col(column) = next_zero.col(column);
+                }
+            }
+            fixed_right = std::move(next);
+        }
+
+        for (Eigen::Index column = 0; column < count; ++column)
+            results[static_cast<std::size_t>(column)] +=
+                fixed_right(0, column);
+        return results;
     }
 
     /// Construct H(x-step) (ascending) or H(step-x) (descending).
