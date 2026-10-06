@@ -70,7 +70,7 @@ void require_relative_close(
     const Real scale = abs(expected) < Real(1) ? Real(1) : Real(abs(expected));
     const Real error = abs(actual - expected) / scale;
     std::cout << std::setprecision(std::numeric_limits<Real>::max_digits10)
-              << "relative error = " << error
+              << "direct/analytical relative error = " << error
               << ", tolerance = " << tolerance << '\n';
     REQUIRE(error < tolerance);
 }
@@ -84,6 +84,58 @@ void require_relative_close(
     require_relative_close(actual.real(), expected.real(), tolerance);
     require_relative_close(actual.imag(), expected.imag(), tolerance);
 }
+
+template<class Real>
+void require_indefinite_close(
+    const std::complex<Real>& indefinite,
+    const std::complex<Real>& direct,
+    Real tolerance = Real(10) * test_tolerance<Real>())
+{
+    using std::abs;
+    const Real real_scale =
+        abs(direct.real()) < Real(1) ? Real(1) : Real(abs(direct.real()));
+    const Real imag_scale =
+        abs(direct.imag()) < Real(1) ? Real(1) : Real(abs(direct.imag()));
+    const Real real_error = abs(indefinite.real() - direct.real()) / real_scale;
+    const Real imag_error = abs(indefinite.imag() - direct.imag()) / imag_scale;
+    const Real error = real_error > imag_error ? real_error : imag_error;
+
+    std::cout << std::setprecision(std::numeric_limits<Real>::max_digits10)
+              << "indefinite/direct relative error = " << error
+              << ", tolerance = " << tolerance << '\n';
+    REQUIRE(error < tolerance);
+}
+
+template<class Real>
+void require_indefinite_analytic_close(
+    const std::complex<Real>& indefinite,
+    const std::complex<Real>& analytical,
+    Real tolerance = Real(10) * test_tolerance<Real>())
+{
+    using std::abs;
+    const Real real_scale =
+        abs(analytical.real()) < Real(1)
+            ? Real(1) : Real(abs(analytical.real()));
+    const Real imag_scale =
+        abs(analytical.imag()) < Real(1)
+            ? Real(1) : Real(abs(analytical.imag()));
+    const Real real_error =
+        abs(indefinite.real() - analytical.real()) / real_scale;
+    const Real imag_error =
+        abs(indefinite.imag() - analytical.imag()) / imag_scale;
+    const Real error = real_error > imag_error ? real_error : imag_error;
+
+    std::cout << std::setprecision(std::numeric_limits<Real>::max_digits10)
+              << "indefinite/analytical relative error = " << error
+              << ", tolerance = " << tolerance << '\n';
+    REQUIRE(error < tolerance);
+}
+
+template<class Real>
+struct QuanticsIntegralResults {
+    std::complex<Real> direct;
+    std::complex<Real> indefinite;
+};
 
 template<class Real>
 struct QuanticsOptions {
@@ -108,7 +160,8 @@ public:
 
     ~TemporaryFitFiles()
     {
-        for (const char* suffix : {".tt", "_error.dat", "_grid.json",
+        for (const char* suffix : {".tt", "_indefinite_int.tt",
+                                   "_error.dat", "_grid.json",
                                    "_grid_E.json", "_f_values.json"}) {
             std::error_code error;
             std::filesystem::remove(prefix_ + suffix, error);
@@ -122,7 +175,7 @@ private:
 };
 
 template<class Real, class Function>
-std::complex<Real> integrate_quantics(Function&& function,
+QuanticsIntegralResults<Real> integrate_quantics(Function&& function,
                                       Real a,
                                       Real b,
                                       QuanticsOptions<Real> settings = {})
@@ -151,8 +204,17 @@ std::complex<Real> integrate_quantics(Function&& function,
 
     const auto integrator = Integrator::fit(
         std::move(grid), std::move(complex_function), std::move(parameters),
-        files.prefix(), std::move(fit_options));
-    return integrator.integrate();
+        files.prefix(), std::move(fit_options), nullptr,
+        std::string("zip-up"));
+
+    typename Integrator::State indefinite_values(
+        files.prefix() + "_indefinite_int.tt", settings.bond_dim,
+        settings.reltol, /*working_site=*/-1);
+    const Complex direct = integrator.integrate();
+    const Complex indefinite = Integrator::integrate_indefinite(
+        indefinite_values, integrator.grid(), a, b);
+    require_indefinite_close(indefinite, direct);
+    return {direct, indefinite};
 }
 
 template<class Real>
@@ -160,7 +222,9 @@ void check_real_type()
 {
     const auto polynomial = integrate_quantics<Real>(
         [](Real x) -> Real { return x * x; }, Real(0), Real(1));
-    require_relative_close(polynomial, std::complex<Real>(Real(1) / Real(3)));
+    const std::complex<Real> expected(Real(1) / Real(3));
+    require_relative_close(polynomial.direct, expected);
+    require_indefinite_analytic_close(polynomial.indefinite, expected);
 }
 
 template<class Real>
@@ -173,12 +237,14 @@ void check_smooth_non_polynomial_type()
         },
         Real(0), Real(1));
 
-    const Real expected =
+    const Real expected_value =
         (exp_value(Real(1)) *
              (cos_value(frequency) + frequency * sin_value(frequency)) -
          Real(1)) /
         (Real(1) + frequency * frequency);
-    require_relative_close(answer, std::complex<Real>(expected));
+    const std::complex<Real> expected(expected_value);
+    require_relative_close(answer.direct, expected);
+    require_indefinite_analytic_close(answer.indefinite, expected);
 }
 
 template<class Real>
@@ -193,7 +259,8 @@ void check_complex_type()
 
     const Complex expected(sin_value(Real(1)),
                            Real(1) - cos_value(Real(1)));
-    require_relative_close(answer, expected);
+    require_relative_close(answer.direct, expected);
+    require_indefinite_analytic_close(answer.indefinite, expected);
 }
 
 } // namespace
@@ -235,6 +302,11 @@ TEST_CASE("direct and batched range sums match explicit MPS values",
         /*working_site=*/-1);
     const Integrator integrator(std::move(grid), std::move(values));
 
+    auto indefinite_values = make_indefinite_integral(
+        integrator.values(), /*max_chi=*/0, /*reltol=*/-1.0, "zip-up");
+    indefinite_values *= Complex(integrator.grid().delta_volume(), 0.0);
+    double maximum_indefinite_error = 0.0;
+
     std::vector<Complex> prefix(point_count + 1, Complex(0.0));
     for (int index = 0; index < point_count; ++index) {
         std::vector<int> bits(nbits);
@@ -266,8 +338,29 @@ TEST_CASE("direct and batched range sums match explicit MPS values",
                 answer * integrator.grid().delta_volume();
             REQUIRE(std::abs(integrated - expected_integral)
                     < 1e-12 * (1.0 + std::abs(expected_integral)));
+
+            // F_N is not represented by the current indefinite MPS, so only
+            // compare intervals whose upper endpoint is a represented point.
+            if (end < point_count) {
+                const double x_min =
+                    integrator.grid().get_a()
+                    + double(begin) * integrator.grid().get_dx();
+                const double x_max =
+                    integrator.grid().get_a()
+                    + double(end) * integrator.grid().get_dx();
+                const Complex indefinite = Integrator::integrate_indefinite(
+                    indefinite_values, integrator.grid(), x_min, x_max);
+                const double error = std::abs(indefinite - integrated);
+                maximum_indefinite_error =
+                    std::max(maximum_indefinite_error, error);
+                REQUIRE(error
+                        < 1e-12 * (1.0 + std::abs(integrated)));
+            }
         }
     }
+
+    std::cout << "maximum scalar indefinite/direct range error = "
+              << maximum_indefinite_error << '\n';
 
     const std::vector<Complex> batched = integrator.sum_batch_v2(ranges);
     REQUIRE(batched.size() == expected.size());
@@ -285,6 +378,40 @@ TEST_CASE("direct and batched range sums match explicit MPS values",
         REQUIRE(std::abs(integrated_batch[index] - expected_integral)
                 < 1e-12 * (1.0 + std::abs(expected_integral)));
     }
+
+    std::vector<double> x_min;
+    std::vector<double> x_max;
+    std::vector<Complex> represented_expected;
+    for (int begin = 0; begin < point_count; ++begin) {
+        for (int end = begin; end < point_count; ++end) {
+            x_min.push_back(
+                integrator.grid().get_a()
+                + double(begin) * integrator.grid().get_dx());
+            x_max.push_back(
+                integrator.grid().get_a()
+                + double(end) * integrator.grid().get_dx());
+            represented_expected.push_back(
+                (prefix[static_cast<std::size_t>(end)]
+                 - prefix[static_cast<std::size_t>(begin)])
+                * integrator.grid().delta_volume());
+        }
+    }
+
+    const std::vector<Complex> indefinite_batch =
+        Integrator::integrate_indefinite(
+            indefinite_values, integrator.grid(), x_min, x_max);
+    REQUIRE(indefinite_batch.size() == represented_expected.size());
+    double maximum_batch_indefinite_error = 0.0;
+    for (std::size_t index = 0; index < indefinite_batch.size(); ++index) {
+        const double error =
+            std::abs(indefinite_batch[index] - represented_expected[index]);
+        maximum_batch_indefinite_error =
+            std::max(maximum_batch_indefinite_error, error);
+        REQUIRE(error
+                < 1e-12 * (1.0 + std::abs(represented_expected[index])));
+    }
+    std::cout << "maximum batched indefinite/direct range error = "
+              << maximum_batch_indefinite_error << '\n';
 }
 
 TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
@@ -326,7 +453,11 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
     TemporaryFitFiles files;
     const Integrator integrator = Integrator::fit(
         std::move(grid), std::move(function), std::move(parameters),
-        files.prefix(), std::move(fit_options));
+        files.prefix(), std::move(fit_options), nullptr,
+        std::string("zip-up"));
+    typename Integrator::State indefinite_values(
+        files.prefix() + "_indefinite_int.tt", /*max_bond_dim=*/64,
+        /*reltol=*/1e-12, /*working_site=*/-1);
 
     const Eigen::Index fitted_rank = integrator.values().get_chi();
     std::cout << "trigonometric benchmark fitted rank = "
@@ -366,6 +497,34 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
         integrator.integrate_lrange(ranges);
     const auto batch_end = Clock::now();
 
+    const auto index_to_coordinate =
+        [&integrator, point_count](util::i128 index) -> double {
+        if (index == point_count)
+            return integrator.grid().get_b();
+        std::vector<int> bits(
+            static_cast<std::size_t>(integrator.grid().get_nBits()));
+        for (int site = 0; site < integrator.grid().get_nBits(); ++site) {
+            bits[static_cast<std::size_t>(site)] =
+                ((index >> site) & util::i128(1)) != util::i128(0) ? 1 : 0;
+        }
+        return integrator.grid().id_to_coord(bits);
+    };
+
+    std::vector<double> x_min;
+    std::vector<double> x_max;
+    x_min.reserve(ranges.size());
+    x_max.reserve(ranges.size());
+    for (const auto& range : ranges) {
+        x_min.push_back(index_to_coordinate(range.begin));
+        x_max.push_back(index_to_coordinate(range.end));
+    }
+
+    const auto indefinite_start = Clock::now();
+    const std::vector<Complex> indefinite_results =
+        Integrator::integrate_indefinite(
+            indefinite_values, integrator.grid(), x_min, x_max);
+    const auto indefinite_end = Clock::now();
+
     Complex full_integrate_checksum(0.0);
     const auto full_integrate_start = Clock::now();
     for (int repetition = 0; repetition < range_count; ++repetition)
@@ -393,6 +552,9 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
     const double batch_ms =
         std::chrono::duration<double, std::milli>(
             batch_end - batch_start).count();
+    const double indefinite_ms =
+        std::chrono::duration<double, std::milli>(
+            indefinite_end - indefinite_start).count();
     const double full_integrate_ms =
         std::chrono::duration<double, std::milli>(
             full_integrate_end - full_integrate_start).count();
@@ -408,6 +570,8 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
               << "100 individual integrate calls: " << individual_ms
               << " ms\n"
               << "one integrate_lrange call: " << batch_ms << " ms\n"
+              << "one cached indefinite-integral call: " << indefinite_ms
+              << " ms\n"
               << "100 full-grid integrate() calls: " << full_integrate_ms
               << " ms\n"
               << "100 full-grid sum() calls: " << full_sum_ms
@@ -429,12 +593,22 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
 
     REQUIRE(batch_results.size() == individual_results.size());
     REQUIRE(old_sum_results.size() == individual_results.size());
+    REQUIRE(indefinite_results.size() == individual_results.size());
+    double maximum_indefinite_error = 0.0;
     for (std::size_t index = 0; index < batch_results.size(); ++index) {
         REQUIRE(std::abs(individual_results[index] - old_sum_results[index])
                 < 1e-10 * (1.0 + std::abs(old_sum_results[index])));
         REQUIRE(std::abs(batch_results[index] - old_sum_results[index])
                 < 1e-10 * (1.0 + std::abs(old_sum_results[index])));
+        const double indefinite_error =
+            std::abs(indefinite_results[index] - old_sum_results[index]);
+        maximum_indefinite_error =
+            std::max(maximum_indefinite_error, indefinite_error);
+        REQUIRE(indefinite_error
+                < 1e-10 * (1.0 + std::abs(old_sum_results[index])));
     }
+    std::cout << "maximum benchmark indefinite/direct error = "
+              << maximum_indefinite_error << '\n';
 }
 
 TEST_CASE("quantics integrator forwards fit diagnostics to spdlog",
@@ -510,7 +684,9 @@ TEST_CASE("additional pivots resolve marked discontinuities", "[integrator]")
             return x < 0.25 ? 1.0 : (x < 0.75 ? 2.0 : 4.0);
         },
         0.0, 1.0, settings);
-    require_relative_close(answer, std::complex<double>(2.25));
+    const std::complex<double> expected(2.25);
+    require_relative_close(answer.direct, expected);
+    require_indefinite_analytic_close(answer.indefinite, expected);
 }
 
 TEST_CASE("quantics integrator resolves an unmarked cusp", "[integrator]")
@@ -520,7 +696,9 @@ TEST_CASE("quantics integrator resolves an unmarked cusp", "[integrator]")
         [](double x) { return std::abs(x - cusp); }, 0.0, 1.0);
     const double expected =
         0.5 * (cusp * cusp + (1.0 - cusp) * (1.0 - cusp));
-    require_relative_close(answer, std::complex<double>(expected));
+    const std::complex<double> analytical(expected);
+    require_relative_close(answer.direct, analytical);
+    require_indefinite_analytic_close(answer.indefinite, analytical);
 }
 
 TEST_CASE("quantics integrator resolves a narrow localized peak",
@@ -541,7 +719,9 @@ TEST_CASE("quantics integrator resolves a narrow localized peak",
         (std::atan((1.0 - centre) / width) -
          std::atan(-centre / width)) /
         width;
-    require_relative_close(answer, std::complex<double>(expected));
+    const std::complex<double> analytical(expected);
+    require_relative_close(answer.direct, analytical);
+    require_indefinite_analytic_close(answer.indefinite, analytical);
 }
 
 TEST_CASE("oscillatory integrals converge", "[integrator]")
@@ -552,6 +732,7 @@ TEST_CASE("oscillatory integrals converge", "[integrator]")
     const auto oscillatory = integrate_quantics<double>(
         [](double x) { return std::cos(200.0 * x); },
         0.0, 1.0, settings);
-    require_relative_close(oscillatory,
-                           std::complex<double>(std::sin(200.0) / 200.0));
+    const std::complex<double> expected(std::sin(200.0) / 200.0);
+    require_relative_close(oscillatory.direct, expected);
+    require_indefinite_analytic_close(oscillatory.indefinite, expected);
 }

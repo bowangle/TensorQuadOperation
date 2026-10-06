@@ -65,7 +65,8 @@ if(TQ_BUILD_TESTS)
         test_mps
         test_compress_svd
         test_mpo
-        test_quantics_integrator)
+        test_quantics_integrator
+        test_indefinite_integral)
 
     foreach(_name IN LISTS _tq_tests)
         add_executable(tq_test_${_name} test/${_name}.cpp)

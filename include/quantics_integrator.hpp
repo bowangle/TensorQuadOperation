@@ -1,5 +1,6 @@
 #pragma once
 
+#include "indefinite_integral.hpp"
 #include "mpo_base.h"
 
 #include <type_int128.h>
@@ -13,6 +14,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -34,6 +36,9 @@
 ///      discontinuities.
 /// 6. std::shared_ptr<spdlog::logger> logger (optional)
 ///      Logger forwarded to TCI2_1D_Runner for fit diagnostics.
+/// 7. std::optional<std::string> indefinite_integral_method (optional)
+///      If provided, construct and save the indefinite-integral MPS using this
+///      MPO-MPS contraction method.
 ///
 /// After fitting, call integrate() for the full domain or
 /// integrate({begin, end}) for a half-open grid-index range.
@@ -52,8 +57,7 @@ public:
     using Function    = std::function<Scalar(RealScalar)>;
     using RunnerParam = TCI2_1D_runner_param<Scalar>;
     using LoggerPtr   = std::shared_ptr<spdlog::logger>;
-    using MatrixX     = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic,
-                                      Eigen::ColMajor>;
+    using MatrixX     = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
     /// Half-open grid-index range [begin, end).
     struct IndexRange {
@@ -79,12 +83,10 @@ public:
     }
 
     /// Reload a grid and MPS previously saved by TCI2_1D_Runner::fit().
-    static QuanticsIntegrator1D from_files(const std::string& grid_file,
-                                           const std::string& mps_file)
+    static QuanticsIntegrator1D from_files(const std::string& grid_file, const std::string& mps_file)
     {
         Grid grid(grid_file);
-        State values(mps_file, /*max_bond_dim=*/0, /*reltol=*/-1,
-                     /*working_site=*/-1);
+        State values(mps_file, /*max_bond_dim=*/0, /*reltol=*/-1, /*working_site=*/-1);
         return QuanticsIntegrator1D(std::move(grid), std::move(values));
     }
 
@@ -97,7 +99,8 @@ public:
                                     RunnerParam parameters,
                                     const std::string& save_prefix,
                                     FitOptions options = {},
-                                    LoggerPtr logger = nullptr)
+                                    LoggerPtr logger = nullptr,
+                                    std::optional<std::string> indefinite_integral_method = std::nullopt)
     {
         if (!function)
             throw std::invalid_argument(
@@ -133,11 +136,51 @@ public:
                        options.discontinuities);
 
             Grid saved_grid(save_prefix + "_grid.json");
-            State saved_values(save_prefix + ".tt", max_bond_dim, reltol,
-                               /*working_site=*/-1);
-            return QuanticsIntegrator1D(std::move(saved_grid),
-                                        std::move(saved_values));
+            State saved_values(save_prefix + ".tt", max_bond_dim, reltol, /*working_site=*/-1);
+
+            if (indefinite_integral_method) {
+                make_indefinite_integrator(saved_values, saved_grid, save_prefix, max_bond_dim, reltol, *indefinite_integral_method);
+            }
+
+            return QuanticsIntegrator1D(std::move(saved_grid), std::move(saved_values));
         }
+    }
+
+    
+    // -----------------------------------------------------------------
+    // Indefinite integral:
+    // -----------------------------------------------------------------
+    
+    static State make_indefinite_integrator(
+        State& values,
+        Grid& grid,
+        const std::string& save_prefix,
+        int max_bond_dim=0,
+        RealScalar reltol=-1,
+        const std::string& method = "zip-up")
+    {
+        State mps_indefinite_int = make_indefinite_integral(values, max_bond_dim, reltol, method);
+        mps_indefinite_int *= Scalar(grid.delta_volume());
+        mps_indefinite_int.save(save_prefix + "_indefinite_int");
+        return mps_indefinite_int;
+    }
+
+    static Scalar integrate_indefinite(
+        const State& indefinite_values,
+        const Grid& grid,
+        const RealScalar& x_min,
+        const RealScalar& x_max)
+    {
+        return integrate_indefinite_method(indefinite_values, grid, x_min, x_max);
+    }
+
+    static std::vector<Scalar> integrate_indefinite(
+        const State& indefinite_values,
+        const Grid& grid,
+        const std::vector<RealScalar>& x_min,
+        const std::vector<RealScalar>& x_max)
+    {
+        return integrate_indefinite_method(indefinite_values, grid, x_min, x_max);
     }
 
     // -----------------------------------------------------------------
@@ -156,8 +199,7 @@ public:
 
     /// Integrate several half-open index ranges with the batched direct-sum
     /// implementation. Results preserve the input range order.
-    [[nodiscard]] std::vector<Scalar> integrate_lrange(
-        const std::vector<IndexRange>& ranges) const
+    [[nodiscard]] std::vector<Scalar> integrate_lrange(const std::vector<IndexRange>& ranges) const
     {
         std::vector<Scalar> results = sum_batch_v2(ranges);
         const Scalar cell_volume = Scalar(grid_.delta_volume());
@@ -211,8 +253,7 @@ public:
     /// products instead of one matrix-vector product per range. Prefixes and
     /// suffixes are batched separately; interior ranges use two batched prefix
     /// boundaries. Results preserve the input range order.
-    [[nodiscard]] std::vector<Scalar> sum_batch_v2(
-        const std::vector<IndexRange>& ranges) const
+    [[nodiscard]] std::vector<Scalar> sum_batch_v2(const std::vector<IndexRange>& ranges) const
     {
         std::vector<Scalar> results(ranges.size(), Scalar(0));
         if (ranges.empty())
@@ -280,6 +321,7 @@ public:
         return results;
     }
 
+private:
     /// Return the sampled MPS multiplied pointwise by 1_[begin,end).
     ///
     /// The interval indicator is first represented as an MPS, promoted to a
@@ -297,6 +339,7 @@ public:
         return interval_operator._mul(values_, "zip-up");
     }
 
+public:
     // -----------------------------------------------------------------
     // Access
     // -----------------------------------------------------------------
