@@ -102,7 +102,14 @@ public:
     /// Both MPSs must have the same nonzero number of binary, LSB-first cores.
     /// The output retains that bit count (overflow is discarded).
     /// No grid spacing or quadrature weights are applied; neither input changes.
-    MPS conv(MPS const& kernel)
+    /// max_bond_dim and reltol override both inputs' stored settings at every
+    /// contraction. A nonpositive cap is unlimited; reltol < 0 disables
+    /// tolerance truncation. final_compress adds a full SVD sweep with the
+    /// same settings. reltol is a per-truncation tolerance, not a total bound.
+    MPS conv(MPS const& kernel,
+             int max_bond_dim = 0,
+             RealScalar reltol = RealScalar(-1),
+             bool final_compress = true)
     {
         if (this->core.empty() || this->core.size() != kernel.get_core().size()) {
             throw std::invalid_argument(
@@ -115,19 +122,32 @@ public:
             }
         }
 
-        // Steps 1-2: build the magic tensor and contract the kernel's m' leg.
-        const auto magic_result = magic_tensor_product(kernel);
+        // Use the requested settings throughout, without modifying either input.
+        MPS configured_signal(*this);
+        configured_signal.max_bond_dim_param = max_bond_dim;
+        configured_signal.reltol_param = reltol;
+        MPS configured_kernel(kernel);
+        configured_kernel.max_bond_dim_param = max_bond_dim;
+        configured_kernel.reltol_param = reltol;
+
+        // Steps 1-2: build the exact magic tensor and contract the kernel's m' leg.
+        const auto magic_result = magic_tensor_product(configured_kernel);
         // Step 3: interpret the remaining (n'*m) cores as an MPO.
         auto convolution_mpo = reshape_magic_res(magic_result);
         // Step 4: contract n' with the signal, retaining the output index m.
-        return convolution_mpo._mul(*this, "zip-up");
+        auto result = convolution_mpo._mul(configured_signal, "zip-up");
+        if (final_compress) {
+            result.compress_svd(reltol, max_bond_dim);
+        }
+        return result;
     }
 
     /// Apply T(-nb_grid_point): shift toward larger grid indices with zero
     /// padding, without periodic wraparound. Uses a basis-MPS convolution
     /// kernel at nb_grid_point, encoded least-significant bit first.
     /// Negative shifts are rejected; shifts beyond the grid return zero.
-    /// The original MPS is not modified.
+    /// The original MPS is not modified. Its stored bond cap and tolerance
+    /// are forwarded to conv, including the final compression sweep.
     MPS neg_translation(util::i128 nb_grid_point)
     {
         if (nb_grid_point < 0) {
@@ -157,7 +177,7 @@ public:
         }
 
         const auto kernel = analytic_mps_construction::make_basis_mps<T>(bits);
-        return conv(kernel);
+        return conv(kernel, this->get_max_bond_dim(), this->get_reltol());
     }
 };
 

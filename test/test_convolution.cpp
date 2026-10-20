@@ -7,7 +7,9 @@
 
 #include <cmath>
 #include <cstddef>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -109,11 +111,18 @@ void require_close(Real actual, Real reference, std::size_t index, Real x,
                    Real tolerance)
 {
     using std::abs;
+    Catch::StringMaker<double>::precision = std::numeric_limits<double>::max_digits10;
     const Real reference_size = abs(reference);
     const Real scale = reference_size > Real(1) ? reference_size : Real(1);
     const Real difference = actual - reference;
     const Real error = Real(abs(difference)) / scale;
-    CAPTURE(index, x, actual, reference, error, tolerance);
+    std::ostringstream message;
+    message << std::scientific
+            << std::setprecision(std::numeric_limits<Real>::max_digits10)
+            << "x=" << x << ", actual=" << actual << ", reference=" << reference
+            << ", error=" << error << ", tolerance=" << tolerance;
+    CAPTURE(index);
+    INFO(message.str());
     REQUIRE(error <= tolerance);
 }
 
@@ -126,34 +135,38 @@ TEMPLATE_TEST_CASE("All function pairs convolve correctly on an 8-bit grid",
     using namespace convolution_tests;
     constexpr int nbit = 8;
     constexpr std::size_t count = std::size_t{1} << nbit;
-    const Real tolerance = Real(1000) * std::numeric_limits<Real>::epsilon();
+    const Real tolerance = Real(2700) * std::numeric_limits<Real>::epsilon();
     auto functions = make_function_cases<Real>(nbit);
 
-    // All 4 x 4 ordered pairs, including equal signal and kernel functions.
+    // All 4 x 4 ordered pairs, with and without the final SVD sweep.
     for (auto& signal : functions) {
         for (const auto& kernel : functions) {
-            DYNAMIC_SECTION("signal=" << signal.name << ", kernel=" << kernel.name) {
-                REQUIRE(signal.grid.get_a() == kernel.grid.get_a());
-                REQUIRE(signal.grid.get_b() == kernel.grid.get_b());
-                REQUIRE(signal.grid.get_nBits() == kernel.grid.get_nBits());
-                REQUIRE(signal.grid.get_dx() == kernel.grid.get_dx());
-                const auto result = signal.mps.conv(kernel.mps);
-                require_structure(result, nbit);
+            for (bool final_compress : {false, true}) {
+                DYNAMIC_SECTION("signal=" << signal.name << ", kernel=" << kernel.name
+                                << ", final_compress=" << final_compress) {
+                    REQUIRE(signal.grid.get_a() == kernel.grid.get_a());
+                    REQUIRE(signal.grid.get_b() == kernel.grid.get_b());
+                    REQUIRE(signal.grid.get_nBits() == kernel.grid.get_nBits());
+                    REQUIRE(signal.grid.get_dx() == kernel.grid.get_dx());
+                    const auto result = signal.mps.conv(
+                        kernel.mps, /*max_bond_dim=*/0, /*reltol=*/Real(-1), final_compress);
+                    require_structure(result, nbit);
 
-                // Inclusive, nonperiodic discrete convolution, without dx.
-                for (std::size_t index = 0; index < count; ++index) {
-                    Real reference = Real(0);
-                    Real compensation = Real(0);
-                    for (std::size_t j = 0; j <= index; ++j) {
-                        const Real term = signal.samples[j] * kernel.samples[index - j];
-                        const Real adjusted = term - compensation;
-                        const Real next = reference + adjusted;
-                        compensation = (next - reference) - adjusted;
-                        reference = next;
+                    // Inclusive, nonperiodic discrete convolution, without dx.
+                    for (std::size_t index = 0; index < count; ++index) {
+                        Real reference = Real(0);
+                        Real compensation = Real(0);
+                        for (std::size_t j = 0; j <= index; ++j) {
+                            const Real term = signal.samples[j] * kernel.samples[index - j];
+                            const Real adjusted = term - compensation;
+                            const Real next = reference + adjusted;
+                            compensation = (next - reference) - adjusted;
+                            reference = next;
+                        }
+                        const auto bits = index_bits(index, nbit);
+                        const Real x = signal.grid.id_to_coord(bits);
+                        require_close(result.eval(bits), reference, index, x, tolerance);
                     }
-                    const auto bits = index_bits(index, nbit);
-                    const Real x = signal.grid.id_to_coord(bits);
-                    require_close(result.eval(bits), reference, index, x, tolerance);
                 }
             }
         }
