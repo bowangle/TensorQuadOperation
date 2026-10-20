@@ -1,0 +1,249 @@
+\documentclass{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath}
+
+\begin{document}
+
+\section{Convolution}
+
+\subsection{Causal convolution using quantics MPS}
+
+We consider the causal convolution
+\begin{equation}
+    F(t)=\int_{T_0}^{t} K(t-v)S(v)\,dv,
+    \qquad T_0\leq t<T_M,
+\end{equation}
+where $K$ is the convolution kernel and $S$ is the signal.
+
+\paragraph{Discretization.}
+
+Let $L=2^N$ be the number of grid points, and define
+\begin{equation}
+    \Delta t=\frac{T_M-T_0}{L}.
+\end{equation}
+
+The signal and the output are discretized on the same grid:
+\begin{equation}
+    t_m=T_0+m\Delta t,
+    \qquad m=0,\ldots,L-1.
+\end{equation}
+
+The kernel is defined on the corresponding time-lag grid:
+\begin{equation}
+    \tau_k=k\Delta t,
+    \qquad k=0,\ldots,L-1.
+\end{equation}
+
+Thus, the discrete functions are
+\begin{equation}
+    S_m=S(t_m),\qquad
+    K_k=K(\tau_k),\qquad
+    F_m=F(t_m).
+\end{equation}
+
+Scaling the inclusive convolution gives the following uncorrected quadrature
+expression; its endpoint convention is discussed below:
+\begin{equation}
+    \boxed{
+    F_m \approx \Delta t
+    \sum_{j=0}^{m}K_{m-j}S_j.
+    }
+    \label{eq:causal_convolution}
+\end{equation}
+
+\paragraph{Endpoint convention and quadrature corrections.}
+
+The current \texttt{conv} operation returns the inclusive discrete sum
+\begin{equation}
+    C_m=\sum_{j=0}^{m}K_{m-j}S_j,
+\end{equation}
+without the factor $\Delta t$. This is a discrete convolution, not yet a
+particular continuous-integration rule. The interval $[T_0,t_m]$ contains
+$m$ grid intervals but $m+1$ samples. For example, if $K=S=1$, the integral
+is $m\Delta t$, whereas the uncorrected inclusive sum gives $(m+1)\Delta t$.
+In particular, the uncorrected value at $m=0$ need not vanish.
+
+To reproduce the previous exclusive-prefix convention in the time-lag
+coordinate, use the right-rectangle rule in the physical signal time $v$:
+\begin{equation}
+    \boxed{
+    F_m^{\mathrm{R}}=
+    \Delta t\sum_{j=1}^{m}K_{m-j}S_j
+    =\Delta t\left(C_m-S_0K_m\right).
+    }
+    \label{eq:convolution_right_rectangle}
+\end{equation}
+Indeed, writing $k=m-j$ gives an exclusive sum over lag indices
+$k=0,\ldots,m-1$. Consequently:
+\begin{itemize}
+    \item For an adiabatic activation $S(v)=\lambda(v)$ with
+    $S_0=\lambda(T_0)=0$, the correction vanishes:
+    $F_m^{\mathrm{R}}=\Delta t\,C_m$.
+    \item For the instantaneous-quench convention $S_j=1$, including
+    $S_0=1$, one obtains
+    $F_m^{\mathrm{R}}=\Delta t(C_m-K_m)
+    =\Delta t\sum_{k=0}^{m-1}K_k$, exactly the previous exclusive prefix sum.
+\end{itemize}
+The corrected result satisfies $F_0^{\mathrm{R}}=0$ in both cases.
+
+Alternatively, trapezoidal quadrature assigns half weight to both endpoints:
+\begin{equation}
+    \boxed{
+    F_m^{\mathrm{trap}}=
+    \Delta t\left[C_m-\frac{K_0S_m+S_0K_m}{2}\right].
+    }
+    \label{eq:convolution_trapezoidal}
+\end{equation}
+This expression also gives $F_0^{\mathrm{trap}}=0$. The endpoint corrections
+require only scalar multiplications and additions of MPSs; they do not
+require changing the convolution algorithm. The factor $\Delta t$ is applied
+once to the output, not separately to each input.
+
+\paragraph{Convolution using the addition tensor.}
+
+Following Section 10.3 of
+\textit{Who can compete with quantum computers?},
+we introduce the addition tensor
+\begin{equation}
+    \Theta_{mjk}=\delta_{m,j+k},
+\end{equation}
+where all indices belong to $\{0,\ldots,L-1\}$.
+
+The discrete convolution can then be expressed as
+\begin{equation}
+    \boxed{
+    F_m \approx \Delta t
+    \sum_{j,k=0}^{L-1}
+    \Theta_{mjk}S_jK_k.
+    }
+\end{equation}
+
+The Kronecker delta enforces $m=j+k$, so that
+only terms satisfying $j\leq m$ contribute.
+
+The addition tensor admits a low-rank
+matrix product operator representation.
+By contracting this tensor with the two
+quantics MPS representing $S$ and $K$,
+we obtain the MPS representation of $F$.
+
+\paragraph{Output grid and boundary conditions.}
+
+Since $S$, $K$, and $F$ each contain $L=2^N$
+samples, all three can be represented
+using $N$ binary indices.
+
+The physical grids satisfy
+\begin{equation}
+    \boxed{
+    \begin{aligned}
+        \mathcal{G}_S &= [T_0,T_M[,\\
+        \mathcal{G}_K &= [0,T_M-T_0[,\\
+        \mathcal{G}_F &= [T_0,T_M[.
+    \end{aligned}
+    }
+\end{equation}
+
+All three grids have the same spacing $\Delta t$.
+
+The addition MPO must impose a zero
+final carry, thereby excluding overflow
+and preventing periodic wraparound.
+
+Consequently, no zero-padding is required
+to calculate the causal convolution on
+the original output grid.
+
+The tensor-network contraction implements
+the discrete convolution exactly in the
+absence of MPS truncation. The remaining
+numerical errors arise from the quadrature
+approximation and possible MPS compression.
+
+\paragraph{Special case $T_0=0$.}
+
+When $T_0=0$, the three grids coincide:
+\begin{equation}
+    \boxed{
+    \mathcal{G}_S=\mathcal{G}_K=\mathcal{G}_F
+    =[0,T_M[.
+    }
+\end{equation}
+
+\subsection{Evaluating the integrated response}
+
+The convolution output already represents the integral up to the observation
+time:
+\begin{equation}
+    F(t)=\int_{T_0}^{t}K(t-v)S(v)\,dv.
+\end{equation}
+Once the convolution, grid-spacing factor, and chosen endpoint treatment
+have been applied, evaluating this output MPS at $t$ gives the desired
+integral. No second integration is needed. With $F(T_0)=0$, subtracting
+$F(T_0)$ is unnecessary; it simply gives $F(t)-F(T_0)=F(t)$.
+The evaluation time must belong to the represented grid: the upper boundary
+$T_M$ is excluded and requires separate endpoint handling if needed.
+
+This output is not, in general, a primitive for integration over arbitrary
+subintervals with a fixed observation time. Such a primitive would be
+\begin{equation}
+    P_t(x)=\int_{T_0}^{x}K(t-v)S(v)\,dv,
+\end{equation}
+with $t$ held fixed while $x$ varies. Although $P_t(t)=F(t)$, generally
+$P_t(x)\neq F(x)$, since the kernel in $F(x)$ is $K(x-v)$.
+Consequently,
+\begin{equation}
+    F(b)-F(a)\neq\int_a^b K(b-v)S(v)\,dv
+\end{equation}
+in general. This does not prevent using the convolution output directly
+for the intended integral from the initial time to the observation time.
+
+\subsection{Application to the first-order Green function}
+
+For the relative-time convention $v=t-t_1\geq0$, the required contribution is
+\begin{equation}
+    G^{(1)}(t=t')=
+    iU\int_0^{t-T_0}\lambda(t-v)
+    \widetilde G^{(1)}(0,0;-v)\,dv.
+\end{equation}
+To distinguish the roles of the two inputs from the earlier notation,
+write the saved integrand as the signal on the positive-delay grid:
+\begin{equation}
+    S_{\mathrm{GF}}(v)=i\widetilde G^{(1)}(0,0;-v).
+\end{equation}
+The saved \texttt{t\_ti} integrand MPS already contains both the negative
+internal-time argument and the prefactor $i$. Neither an additional
+reflection nor another multiplication by $i$ is required.
+
+Introduce elapsed observation time $T=t-T_0$ and the activation input
+\begin{equation}
+    A(w)=\lambda(T_0+w),\qquad w\geq0.
+\end{equation}
+Then the desired response is a convolution of these two inputs:
+\begin{equation}
+    \boxed{
+    R(T)=\int_0^T S_{\mathrm{GF}}(v)A(T-v)\,dv,
+    \qquad G^{(1)}(t=t')=U R(t-T_0).
+    }
+\end{equation}
+Both input arrays are indexed by elapsed coordinates on
+$[0,T_M-T_0[$, with the same number of points and spacing $\Delta t$.
+Thus, after applying the quadrature convention, a helper such as
+\texttt{make\_indefinite\_integral\_conv} is intended to construct
+\begin{equation}
+    R_m\approx\Delta t\sum_{j=0}^{m}
+    S_{\mathrm{GF}}(j\Delta t)A((m-j)\Delta t).
+\end{equation}
+For an adiabatic ramp with $A(0)=\lambda(T_0)=0$, this inclusive sum
+already equals the exclusive rectangle sum over lag indices $j<m$;
+its diagonal endpoint term vanishes and $R_0=0$.
+
+The final calculation therefore consists only of evaluating the response
+MPS and multiplying by $U$. If its returned grid represents elapsed time,
+evaluate it at $t-T_0$. If the same array is assigned the physical-time
+grid $[T_0,T_M[$ instead, evaluate it at $t$. For $T_0=0$, these coordinates
+coincide. The grid-spacing factor is applied during response construction,
+not again during evaluation, and there is no need to subtract the origin
+value for the ramp with $\lambda(T_0)=0$.
+
+\end{document}

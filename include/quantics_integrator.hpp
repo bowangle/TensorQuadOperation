@@ -165,6 +165,35 @@ public:
         return mps_indefinite_int;
     }
 
+    /// Build the integrated convolution response using values/grid and
+    /// kernel/kernel_grid. The helper validates the grids and kernel(0) == 0
+    /// and already applies the grid spacing; do not multiply by it again.
+    /// Saves <save_prefix>_indefinite_int.tt, replacing that file if present,
+    /// and returns the response MPS on grid. Neither input is modified.
+    /// Evaluate this response at the observation time; differences are not
+    /// general weighted subinterval integrals. Uses MPS::conv's zip-up path.
+    static State make_indefinite_integrator_conv(
+        const State& values,
+        const Grid& grid,
+        const State& kernel,
+        const Grid& kernel_grid,
+        const std::string& save_prefix,
+        int max_bond_dim = 0,
+        RealScalar reltol = RealScalar(-1),
+        bool final_compress = true)
+    {
+        if (save_prefix.empty()) {
+            throw std::invalid_argument(
+                "make_indefinite_integrator_conv: save_prefix must not be empty");
+        }
+
+        auto response = make_indefinite_integral_conv(
+            values, grid, kernel, kernel_grid,
+            max_bond_dim, reltol, final_compress);
+        response.first.save(save_prefix + "_conv_indefinite_int");
+        return std::move(response.first);
+    }
+
     static Scalar integrate_indefinite(
         const State& indefinite_values,
         const Grid& grid,

@@ -6,6 +6,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 /// Construct one core of the Heaviside MPO H(n,m) = Theta(n-m).
@@ -129,6 +130,69 @@ MPS<Scalar> make_indefinite_integral(
     // them to a local copy of the input MPS instead.
     MPS<Scalar> configured_values(values.get_core(), max_chi, reltol, values.get_w());
     return heaviside._mul(configured_values, method);
+}
+
+/// Construct the integrated convolution response
+///     F_n = dt * sum_{m=0}^{n-1} kernel[n-m] * values[m].
+/// values live on [a,b); the kernel lives on [0,b-a), with matching bit
+/// counts and spacing. The kernel's first sample must be exactly zero,
+/// making the inclusive conv sum identical to the exclusive sum above.
+/// Returns {response_mps, value_grid}; the spacing factor is already applied.
+/// Contraction limits and final_compress are forwarded to MPS::conv.
+/// Neither input is modified. This is a convolution response, not a general
+/// primitive whose differences evaluate arbitrary weighted subintervals.
+template<typename Scalar, typename ValueGrid, typename KernelGrid>
+std::pair<MPS<Scalar>, ValueGrid> make_indefinite_integral_conv(
+    const MPS<Scalar>& values,
+    const ValueGrid& value_grid,
+    const MPS<Scalar>& kernel,
+    const KernelGrid& kernel_grid,
+    int max_chi = 0,
+    typename Eigen::NumTraits<Scalar>::Real reltol =
+        typename Eigen::NumTraits<Scalar>::Real(-1),
+    bool final_compress = true)
+{
+    using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
+    const auto a = value_grid.get_a();
+    const auto b = value_grid.get_b();
+    const int nbit = value_grid.get_nBits();
+
+    // Step 1: validate the physical grids and their represented MPSs.
+    if (nbit <= 0 || !(b > a) || !(value_grid.get_dx() > RealScalar(0))) {
+        throw std::invalid_argument(
+            "make_indefinite_integral_conv: invalid value grid");
+    }
+    if (kernel_grid.get_a() != RealScalar(0)) {
+        throw std::invalid_argument(
+            "make_indefinite_integral_conv: kernel grid must start at zero");
+    }
+    if (kernel_grid.get_b() != b - a) {
+        throw std::invalid_argument(
+            "make_indefinite_integral_conv: kernel grid must end at b-a");
+    }
+    if (kernel_grid.get_nBits() != nbit) {
+        throw std::invalid_argument(
+            "make_indefinite_integral_conv: grid bit counts differ");
+    }
+    if (kernel_grid.get_dx() != value_grid.get_dx()) {
+        throw std::invalid_argument(
+            "make_indefinite_integral_conv: grid spacings differ");
+    }
+
+    // Step 2: require a zero diagonal activation weight.
+    const std::vector<int> zero_bits(nbit, 0);
+    if (kernel.eval(zero_bits) != Scalar(0)) {
+        throw std::invalid_argument(
+            "make_indefinite_integral_conv: kernel(0) must be zero");
+    }
+
+    // Step 3: conv is non-const, so call it on a copy and scale once by dt.
+    MPS<Scalar> signal(values);
+    auto out = signal.conv(kernel, max_chi, reltol, final_compress);
+    out *= Scalar(value_grid.get_dx());
+
+    // Step 4: the output origin is a+0, so retain the values' grid.
+    return {std::move(out), value_grid};
 }
 
 /// Evaluate an indefinite-integral MPS at two grid coordinates and return
