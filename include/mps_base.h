@@ -1,12 +1,17 @@
 #pragma once
 
 #include "tt_base.h"
+#include <type_int128.h>
 
 // Helper declarations for the convolution implementation below.
 template<typename T> class MPS;
 template<typename T> class MPO;
 template<typename T> MPS<T> magic_tensor_product(const MPS<T>& mps);
 template<typename T> MPO<T> reshape_magic_res(const MPS<T>& result);
+
+namespace analytic_mps_construction {
+template<typename T> MPS<T> make_basis_mps(const std::vector<int>& bits);
+}
 
 // Matrix Product State: a TT whose physical leg is the fused
 // (row x column) operator index — n_phys = 2 for qubits, i.e. cores
@@ -103,8 +108,8 @@ public:
             throw std::invalid_argument(
                 "MPS::conv: expected nonempty MPSs of the same length");
         }
-        for (const auto& core : this->core) {
-            if (core.n_phys != 2) {
+        for (const auto& tensor : this->core) {
+            if (tensor.n_phys != 2) {
                 throw std::invalid_argument(
                     "MPS::conv: expected signal physical dimension 2");
             }
@@ -117,6 +122,44 @@ public:
         // Step 4: contract n' with the signal, retaining the output index m.
         return convolution_mpo._mul(*this, "zip-up");
     }
+
+    /// Apply T(-nb_grid_point): shift toward larger grid indices with zero
+    /// padding, without periodic wraparound. Uses a basis-MPS convolution
+    /// kernel at nb_grid_point, encoded least-significant bit first.
+    /// Negative shifts are rejected; shifts beyond the grid return zero.
+    /// The original MPS is not modified.
+    MPS neg_translation(util::i128 nb_grid_point)
+    {
+        if (nb_grid_point < 0) {
+            throw std::invalid_argument(
+                "MPS::neg_translation: nb_grid_point must be nonnegative");
+        }
+        if (this->core.empty()) {
+            throw std::invalid_argument("MPS::neg_translation: MPS must not be empty");
+        }
+        for (const auto& tensor : this->core) {
+            if (tensor.n_phys != 2) {
+                throw std::invalid_argument(
+                    "MPS::neg_translation: expected physical dimension 2");
+            }
+        }
+
+        std::vector<int> bits(this->core.size());
+        util::i128 remaining = nb_grid_point;
+        for (std::size_t bit = 0; bit < bits.size(); ++bit) {
+            bits[bit] = static_cast<int>(remaining & util::i128(1));
+            remaining >>= 1;
+        }
+        if (remaining != 0) {
+            MPS zero(*this);
+            zero *= T(0);
+            return zero;
+        }
+
+        const auto kernel = analytic_mps_construction::make_basis_mps<T>(bits);
+        return conv(kernel);
+    }
 };
 
 #include "magic_tensor.hpp"
+#include "generic_construction.hpp"
