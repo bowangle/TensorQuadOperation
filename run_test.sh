@@ -3,7 +3,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Remove existing test output files (if any)
-rm -f "$SCRIPT_DIR/test/test_Mat_QR.txt" "$SCRIPT_DIR/test/test_Mat_SVDDecomp.txt" "$SCRIPT_DIR/test/test_Tensor3D.txt" "$SCRIPT_DIR/test/test_TT_base.txt" "$SCRIPT_DIR/test/test_mps.txt" "$SCRIPT_DIR/test/test_compress_svd.txt" "$SCRIPT_DIR/test/test_mpo.txt" "$SCRIPT_DIR/test/test_indefinite_integral.txt" "$SCRIPT_DIR/test/test_quantics_integrator.txt"
+rm -f "$SCRIPT_DIR/test/test_Mat_QR.txt" "$SCRIPT_DIR/test/test_Mat_SVDDecomp.txt" "$SCRIPT_DIR/test/test_Tensor3D.txt" "$SCRIPT_DIR/test/test_TT_base.txt" "$SCRIPT_DIR/test/test_mps.txt" "$SCRIPT_DIR/test/test_compress_svd.txt" "$SCRIPT_DIR/test/test_mpo.txt" "$SCRIPT_DIR/test/test_indefinite_integral.txt" "$SCRIPT_DIR/test/test_quantics_integrator.txt" "$SCRIPT_DIR/test/test_convolution.txt" "$SCRIPT_DIR/test/test_analytics_construction.txt"
 
 cd "$SCRIPT_DIR"
 
@@ -17,6 +17,8 @@ cd "$SCRIPT_DIR"
 ./build/tq_test_test_mpo          > "$SCRIPT_DIR/test/test_mpo.txt"         2>&1 &
 ./build/tq_test_test_indefinite_integral > "$SCRIPT_DIR/test/test_indefinite_integral.txt" 2>&1 &
 ./build/tq_test_test_quantics_integrator > "$SCRIPT_DIR/test/test_quantics_integrator.txt" 2>&1 &
+./build/tq_test_test_convolution > "$SCRIPT_DIR/test/test_convolution.txt" 2>&1 &
+./build/tq_test_test_analytics_construction > "$SCRIPT_DIR/test/test_analytics_construction.txt" 2>&1 &
 
 # Wait for all background processes to finish
 wait
