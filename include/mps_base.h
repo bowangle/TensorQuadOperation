@@ -2,6 +2,12 @@
 
 #include "tt_base.h"
 
+// Helper declarations for the convolution implementation below.
+template<typename T> class MPS;
+template<typename T> class MPO;
+template<typename T> MPS<T> magic_tensor_product(const MPS<T>& mps);
+template<typename T> MPO<T> reshape_magic_res(const MPS<T>& result);
+
 // Matrix Product State: a TT whose physical leg is the fused
 // (row x column) operator index — n_phys = 2 for qubits, i.e. cores
 // of shape (chi, 2, chi'), with slot ordering
@@ -85,4 +91,32 @@ public:
     {
         return Eigen::numext::real(dot(*this));
     }
+
+    /// Causal discrete convolution: result[m] = sum_{j=0}^m
+    /// (*this)[j] * kernel[m-j], without conjugation or periodic wraparound.
+    /// Both MPSs must have the same nonzero number of binary, LSB-first cores.
+    /// The output retains that bit count (overflow is discarded).
+    /// No grid spacing or quadrature weights are applied; neither input changes.
+    MPS conv(MPS const& kernel)
+    {
+        if (this->core.empty() || this->core.size() != kernel.get_core().size()) {
+            throw std::invalid_argument(
+                "MPS::conv: expected nonempty MPSs of the same length");
+        }
+        for (const auto& core : this->core) {
+            if (core.n_phys != 2) {
+                throw std::invalid_argument(
+                    "MPS::conv: expected signal physical dimension 2");
+            }
+        }
+
+        // Steps 1-2: build the magic tensor and contract the kernel's m' leg.
+        const auto magic_result = magic_tensor_product(kernel);
+        // Step 3: interpret the remaining (n'*m) cores as an MPO.
+        auto convolution_mpo = reshape_magic_res(magic_result);
+        // Step 4: contract n' with the signal, retaining the output index m.
+        return convolution_mpo._mul(*this, "zip-up");
+    }
 };
+
+#include "magic_tensor.hpp"
