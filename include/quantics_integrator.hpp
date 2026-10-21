@@ -93,7 +93,8 @@ public:
     /// Run TCI2_1D_Runner, save its result, then reload the saved grid and MPS.
     ///
     /// `save_prefix` is passed directly to the runner. In particular, the
-    /// runner writes `<save_prefix>.tt` and `<save_prefix>_grid.json`.
+    /// runner writes `<save_prefix>.tt`, `<save_prefix>_grid.json`, and
+    /// `<save_prefix>_grid_E.json`. Reload the full-precision `_grid_E.json`.
     static QuanticsIntegrator1D fit(Grid grid,
                                     Function function,
                                     RunnerParam parameters,
@@ -135,7 +136,7 @@ public:
                        options.nb_point_res,
                        options.discontinuities);
 
-            Grid saved_grid(save_prefix + "_grid.json");
+            Grid saved_grid(save_prefix + "_grid_E.json");
             State saved_values(save_prefix + ".tt", max_bond_dim, reltol, /*working_site=*/-1);
 
             if (indefinite_integral_method) {

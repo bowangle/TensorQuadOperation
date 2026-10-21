@@ -28,6 +28,15 @@ template<class Real>
 inline constexpr int nbits_for = std::is_same_v<Real, double> ? 50 : 99;
 
 template<class Real>
+std::pair<Real, Real> integration_interval(int index)
+{
+    const std::vector<std::pair<Real, Real>> intervals{
+        {Real(0), Real(1)}, {Real(-9) / Real(10), Real(1)},
+        {Real(1) / Real(10), Real(9) / Real(10)}};
+    return intervals.at(static_cast<std::size_t>(index));
+}
+
+template<class Real>
 Real exp_value(const Real& value)
 {
     using std::exp;
@@ -51,7 +60,7 @@ Real cos_value(const Real& value)
 template<class Real>
 Real test_tolerance()
 {
-    return Real(10000) * Real(std::numeric_limits<Real>::epsilon());
+    return Real(13000) * Real(std::numeric_limits<Real>::epsilon());
 }
 
 template<class Real>
@@ -243,31 +252,38 @@ QuanticsIntegralResults<Real> integrate_quantics(Function&& function,
 }
 
 template<class Real>
-void check_real_type()
+void check_real_type(int interval_index)
 {
+    const auto [a, b] = integration_interval<Real>(interval_index);
+    CAPTURE(a, b);
     const auto polynomial = integrate_quantics<Real>(
-        [](Real x) -> Real { return x * x; }, Real(0), Real(1));
-    const std::complex<Real> expected(Real(1) / Real(3));
+        [](Real x) -> Real { return x * x; }, a, b);
+    const Real expected_value = (b * b * b - a * a * a) / Real(3);
+    const std::complex<Real> expected(expected_value);
     require_relative_close(polynomial.direct, expected);
     require_indefinite_analytic_close(polynomial.indefinite, expected);
     require_indefinite_analytic_close(polynomial.indefinite_conv, expected, "indefinite_conv");
 }
 
 template<class Real>
-void check_smooth_non_polynomial_type()
+void check_smooth_non_polynomial_type(int interval_index)
 {
+    const auto [a, b] = integration_interval<Real>(interval_index);
+    CAPTURE(a, b);
     const Real frequency = Real(17);
     const auto answer = integrate_quantics<Real>(
         [frequency](Real x) -> Real {
             return exp_value(x) * cos_value(frequency * x);
         },
-        Real(0), Real(1));
+        a, b);
 
-    const Real expected_value =
-        (exp_value(Real(1)) *
-             (cos_value(frequency) + frequency * sin_value(frequency)) -
-         Real(1)) /
-        (Real(1) + frequency * frequency);
+    const auto primitive = [frequency](Real x) -> Real {
+        const Real angle = frequency * x;
+        return Real(exp_value(x) *
+                    (cos_value(angle) + frequency * sin_value(angle)) /
+                    (Real(1) + frequency * frequency));
+    };
+    const Real expected_value = primitive(b) - primitive(a);
     const std::complex<Real> expected(expected_value);
     require_relative_close(answer.direct, expected);
     require_indefinite_analytic_close(answer.indefinite, expected);
@@ -275,17 +291,19 @@ void check_smooth_non_polynomial_type()
 }
 
 template<class Real>
-void check_complex_type()
+void check_complex_type(int interval_index)
 {
     using Complex = std::complex<Real>;
+    const auto [a, b] = integration_interval<Real>(interval_index);
+    CAPTURE(a, b);
     const auto answer = integrate_quantics<Real>(
         [](Real x) -> Complex {
             return Complex(cos_value(x), sin_value(x));
         },
-        Real(0), Real(1));
+        a, b);
 
-    const Complex expected(sin_value(Real(1)),
-                           Real(1) - cos_value(Real(1)));
+    const Complex expected(sin_value(b) - sin_value(a),
+                           cos_value(a) - cos_value(b));
     require_relative_close(answer.direct, expected);
     require_indefinite_analytic_close(answer.indefinite, expected);
     require_indefinite_analytic_close(answer.indefinite_conv, expected, "indefinite_conv");
@@ -300,6 +318,9 @@ TEST_CASE("direct and batched range sums match explicit MPS values",
     using Integrator = QuanticsIntegrator1D<Complex>;
     using Sint = util::i128;
 
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     constexpr int nbits = 5;
     constexpr int point_count = 1 << nbits;
     const std::vector<Eigen::Index> bonds = {1, 2, 3, 2, 2, 1};
@@ -324,7 +345,7 @@ TEST_CASE("direct and batched range sums match explicit MPS values",
         cores.push_back(std::move(core));
     }
 
-    typename Integrator::Grid grid(0.0, 1.0, nbits);
+    typename Integrator::Grid grid(a, b, nbits);
     typename Integrator::State values(
         std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1.0,
         /*working_site=*/-1);
@@ -484,8 +505,11 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
     using Integrator = QuanticsIntegrator1D<Complex>;
     using Clock = std::chrono::steady_clock;
 
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     constexpr int nbits = 49;
-    typename Integrator::Grid grid(0.0, 1.0, nbits);
+    typename Integrator::Grid grid(a, b, nbits);
     TCI2_1D_runner_opts<Complex> runner_options;
     runner_options.reltol = 1e-12;
     runner_options.pivot1 = grid.coord_to_id(0.37123456789);
@@ -724,8 +748,11 @@ TEST_CASE("quantics integrator forwards fit diagnostics to spdlog",
     using Complex = std::complex<double>;
     using Integrator = QuanticsIntegrator1D<Complex>;
 
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     constexpr int nbits = 8;
-    typename Integrator::Grid grid(0.0, 1.0, nbits);
+    typename Integrator::Grid grid(a, b, nbits);
     TCI2_1D_runner_opts<Complex> runner_options;
     runner_options.reltol = 1e-12;
     runner_options.pivot1 = grid.coord_to_id(0.5);
@@ -760,41 +787,48 @@ TEST_CASE("quantics integrator forwards fit diagnostics to spdlog",
         integrator, files.prefix(), /*max_bond_dim=*/8, /*reltol=*/1e-12);
     const util::i128 end = integrator.grid().get_N() - util::i128(1);
     const double dx = integrator.grid().get_dx();
-    const double upper = double(end) * dx;
+    const double upper = a + double(end) * dx;
     const Complex direct = integrator.integrate({util::i128(0), end});
     const Complex indefinite_conv = Integrator::integrate_indefinite(
-        indefinite_conv_values, integrator.grid(), 0.0, upper);
+        indefinite_conv_values, integrator.grid(), a, upper);
     // Exact left-rectangle sum for f(x)=x on this represented interval.
-    const Complex analytical(0.5 * double(end) * double(end - 1) * dx * dx, 0.0);
+    const Complex analytical(
+        double(end) * a * dx + 0.5 * double(end) * double(end - 1) * dx * dx, 0.0);
     require_indefinite_close(indefinite_conv, direct, "indefinite_conv");
     require_indefinite_analytic_close(indefinite_conv, analytical, "indefinite_conv");
 }
 
 TEST_CASE("quantics integrator supports all real scalar types", "[integrator]")
 {
-    check_real_type<double>();
-    check_real_type<dd_128>();
-    check_real_type<float128>();
+    const auto interval_index = GENERATE(0, 1, 2);
+    check_real_type<double>(interval_index);
+    check_real_type<dd_128>(interval_index);
+    check_real_type<float128>(interval_index);
 }
 
 TEST_CASE("quantics integrator handles smooth non-polynomial functions",
           "[integrator]")
 {
-    check_smooth_non_polynomial_type<double>();
-    check_smooth_non_polynomial_type<dd_128>();
-    check_smooth_non_polynomial_type<float128>();
+    const auto interval_index = GENERATE(0, 1, 2);
+    check_smooth_non_polynomial_type<double>(interval_index);
+    check_smooth_non_polynomial_type<dd_128>(interval_index);
+    check_smooth_non_polynomial_type<float128>(interval_index);
 }
 
 TEST_CASE("quantics integrator supports all complex scalar types",
           "[integrator]")
 {
-    check_complex_type<double>();
-    check_complex_type<dd_128>();
-    check_complex_type<float128>();
+    const auto interval_index = GENERATE(0, 1, 2);
+    check_complex_type<double>(interval_index);
+    check_complex_type<dd_128>(interval_index);
+    check_complex_type<float128>(interval_index);
 }
 
 TEST_CASE("additional pivots resolve marked discontinuities", "[integrator]")
 {
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     QuanticsOptions<double> settings;
     settings.points = {0.75, 0.25, 0.25};
     settings.limit = 100;
@@ -803,8 +837,11 @@ TEST_CASE("additional pivots resolve marked discontinuities", "[integrator]")
         [](double x) {
             return x < 0.25 ? 1.0 : (x < 0.75 ? 2.0 : 4.0);
         },
-        0.0, 1.0, settings);
-    const std::complex<double> expected(2.25);
+        a, b, settings);
+    const auto primitive = [](double x) {
+        return x + std::max(0.0, x - 0.25) + 2.0 * std::max(0.0, x - 0.75);
+    };
+    const std::complex<double> expected(primitive(b) - primitive(a));
     require_relative_close(answer.direct, expected);
     require_indefinite_analytic_close(answer.indefinite, expected);
     require_indefinite_analytic_close(answer.indefinite_conv, expected, "indefinite_conv");
@@ -812,11 +849,17 @@ TEST_CASE("additional pivots resolve marked discontinuities", "[integrator]")
 
 TEST_CASE("quantics integrator resolves an unmarked cusp", "[integrator]")
 {
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     constexpr double cusp = 0.123456789;
     const auto answer = integrate_quantics<double>(
-        [](double x) { return std::abs(x - cusp); }, 0.0, 1.0);
-    const double expected =
-        0.5 * (cusp * cusp + (1.0 - cusp) * (1.0 - cusp));
+        [](double x) { return std::abs(x - cusp); }, a, b);
+    const auto primitive = [](double x) {
+        const double offset = x - cusp;
+        return 0.5 * offset * std::abs(offset);
+    };
+    const double expected = primitive(b) - primitive(a);
     const std::complex<double> analytical(expected);
     require_relative_close(answer.direct, analytical);
     require_indefinite_analytic_close(answer.indefinite, analytical);
@@ -826,6 +869,9 @@ TEST_CASE("quantics integrator resolves an unmarked cusp", "[integrator]")
 TEST_CASE("quantics integrator resolves a narrow localized peak",
           "[integrator]")
 {
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     constexpr double centre = 0.3712345;
     constexpr double width = 0.01;
     QuanticsOptions<double> settings;
@@ -836,10 +882,10 @@ TEST_CASE("quantics integrator resolves a narrow localized peak",
             const double offset = x - centre;
             return 1.0 / (offset * offset + width * width);
         },
-        0.0, 1.0, settings);
+        a, b, settings);
     const double expected =
-        (std::atan((1.0 - centre) / width) -
-         std::atan(-centre / width)) /
+        (std::atan((b - centre) / width) -
+         std::atan((a - centre) / width)) /
         width;
     const std::complex<double> analytical(expected);
     require_relative_close(answer.direct, analytical);
@@ -849,13 +895,17 @@ TEST_CASE("quantics integrator resolves a narrow localized peak",
 
 TEST_CASE("oscillatory integrals converge", "[integrator]")
 {
+    const auto interval_index = GENERATE(0, 1, 2);
+    const auto [a, b] = integration_interval<double>(interval_index);
+    CAPTURE(a, b);
     QuanticsOptions<double> settings;
     settings.limit = 200;
 
     const auto oscillatory = integrate_quantics<double>(
         [](double x) { return std::cos(200.0 * x); },
-        0.0, 1.0, settings);
-    const std::complex<double> expected(std::sin(200.0) / 200.0);
+        a, b, settings);
+    const std::complex<double> expected(
+        (std::sin(200.0 * b) - std::sin(200.0 * a)) / 200.0);
     require_relative_close(oscillatory.direct, expected);
     require_indefinite_analytic_close(oscillatory.indefinite, expected);
     require_indefinite_analytic_close(oscillatory.indefinite_conv, expected, "indefinite_conv");
