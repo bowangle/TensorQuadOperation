@@ -151,6 +151,7 @@ public:
     // Indefinite integral:
     // -----------------------------------------------------------------
     
+    // make indefinite integrator, old method
     static State make_indefinite_integrator(
         State& values,
         Grid& grid,
@@ -165,10 +166,37 @@ public:
         return mps_indefinite_int;
     }
 
+    /// New method using convolution that perform the same as make_indefinite_integrator
+    /// Construct the ordinary exclusive-prefix integral via convolution with
+    /// a kernel that is zero at the origin and one at every subsequent point.
+    /// Delegates scaling and saving to make_indefinite_integrator_conv, using
+    /// its <save_prefix>_conv_indefinite_int.tt filename. Only zip-up is supported.
+    static State make_indefinite_integrator_from_conv(
+        State& values,
+        Grid& grid,
+        const std::string& save_prefix,
+        int max_bond_dim=0,
+        RealScalar reltol=-1,
+        const std::string& method = "zip-up")
+    {
+        if (method != "zip-up") {
+            throw std::invalid_argument(
+                "make_indefinite_integrator_from_conv: only zip-up is supported");
+        }
+
+        const RealScalar length = grid.get_b() - grid.get_a();
+        auto [kernel, kernel_grid] =
+            analytic_mps_construction::make_exclusive_heaviside_mps<Scalar, Sint>(
+                length, grid.get_nBits());
+        return make_indefinite_integrator_conv(
+            values, grid, kernel, kernel_grid,
+            save_prefix, max_bond_dim, reltol);
+    }
+
     /// Build the integrated convolution response using values/grid and
     /// kernel/kernel_grid. The helper validates the grids and kernel(0) == 0
     /// and already applies the grid spacing; do not multiply by it again.
-    /// Saves <save_prefix>_indefinite_int.tt, replacing that file if present,
+    /// Saves <save_prefix>_conv_indefinite_int.tt, replacing that file if present,
     /// and returns the response MPS on grid. Neither input is modified.
     /// Evaluate this response at the observation time; differences are not
     /// general weighted subinterval integrals. Uses MPS::conv's zip-up path.
