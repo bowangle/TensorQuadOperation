@@ -140,6 +140,17 @@ TEMPLATE_TEST_CASE("Analytic MPS factories construct valid states and grids",
         require_mps_structure(mps, nbit, 1);
     }
 
+    SECTION("Point defect MPS") {
+        const auto result = make_point_defect_mps<Real>(a, b, nbit, a);
+        require_construction(result, a, b, nbit, 2);
+    }
+
+    SECTION("Exclusive Heaviside MPS") {
+        const Real length = b - a;
+        const auto result = make_exclusive_heaviside_mps<Real>(length, nbit);
+        require_construction(result, Real(0), length, nbit, 2);
+    }
+
     SECTION("Heaviside MPS") {
         const auto result = make_heaviside_mps<Real>(
             a, b, nbit, Real(1) / Real(3),
@@ -198,6 +209,48 @@ TEMPLATE_TEST_CASE("Analytic MPS values match their functions at every 4-bit gri
         const QTGrid<Real, util::i128> grid(a, b, nbit);
         require_all_grid_values("Basis MPS", mps, grid,
             [](Real, std::size_t index) { return index == 10 ? Real(1) : Real(0); },
+            /*exact=*/true);
+    }
+
+    SECTION("Point defect MPS defaults: zero at the first point and one elsewhere") {
+        const auto result = make_point_defect_mps<Real>(a, b, nbit, a);
+        require_all_grid_values("Point defect MPS defaults", result.first, result.second,
+            [](Real, std::size_t index) { return index == 0 ? Real(0) : Real(1); },
+            /*exact=*/true);
+    }
+
+    SECTION("Point defect MPS: every grid point and background/value combinations") {
+        const QTGrid<Real, util::i128> defect_grid(a, b, nbit);
+        constexpr std::size_t count = std::size_t{1} << nbit;
+        const std::vector<std::pair<Real, Real>> choices{
+            {Real(1), Real(0)}, {Real(-2), Real(3)},
+            {Real(0), Real(5)}, {Real(2), Real(2)}};
+        for (std::size_t defect_index = 0; defect_index < count; ++defect_index) {
+            const Real x0 = a + Real(defect_index) * defect_grid.get_dx();
+            for (const auto& choice : choices) {
+                const Real background = choice.first;
+                const Real point_value = choice.second;
+                DYNAMIC_SECTION("defect_index=" << defect_index << ", background=" << background
+                                << ", point_value=" << point_value) {
+                    const auto result = make_point_defect_mps<Real>(
+                        a, b, nbit, x0, background, point_value);
+                    const int rank_bound = background == Real(0) || background == point_value ? 1 : 2;
+                    require_construction(result, a, b, nbit, rank_bound);
+                    require_all_grid_values("Point defect MPS", result.first, result.second,
+                        [=](Real, std::size_t index) {
+                            return index == defect_index ? point_value : background;
+                        }, /*exact=*/true);
+                }
+            }
+        }
+    }
+
+    SECTION("Exclusive Heaviside MPS: zero at the origin and one elsewhere") {
+        const Real length = b - a;
+        const auto result = make_exclusive_heaviside_mps<Real>(length, nbit);
+        require_construction(result, Real(0), length, nbit, 2);
+        require_all_grid_values("Exclusive Heaviside MPS", result.first, result.second,
+            [](Real, std::size_t index) { return index == 0 ? Real(0) : Real(1); },
             /*exact=*/true);
     }
 

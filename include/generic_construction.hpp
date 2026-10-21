@@ -44,6 +44,79 @@ MPS<Scalar> make_basis_mps(const std::vector<int>& bits)
                        /*reltol=*/-1, /*w=*/-1);
 }
 
+/// Construct a constant background with value point_value at the single
+/// grid point x0. Defaults give one everywhere except zero at x0; choose
+/// x0=a to put the zero at the first grid point.
+/// Returns {mps, grid} on [a,b), LSB-first, with bond rank at most two.
+/// x0 must be a represented grid point: off-grid coordinates are rejected.
+/// Cores track whether the input bits still match x0, then select the
+/// point value or background directly, without subtractive cancellation.
+/// No TCI, truncation, or canonicalization is performed.
+template<typename Scalar = double, typename Sint = util::i128>
+std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+make_point_defect_mps(
+    typename Eigen::NumTraits<Scalar>::Real a,
+    typename Eigen::NumTraits<Scalar>::Real b,
+    int nbit,
+    typename Eigen::NumTraits<Scalar>::Real x0,
+    Scalar background = Scalar(1),
+    Scalar point_value = Scalar(0))
+{
+    using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
+    using Grid = QTGrid<RealScalar, Sint>;
+    using std::isfinite;
+
+    if (nbit <= 0) {
+        throw std::invalid_argument("make_point_defect_mps: nbit must be positive");
+    }
+    Grid grid(a, b, nbit);
+    if (!isfinite(x0) || x0 < a || x0 >= b) {
+        throw std::invalid_argument("make_point_defect_mps: x0 must lie in [a,b)");
+    }
+    const auto bits = grid.coord_to_id(x0);
+    if (grid.id_to_coord(bits) != x0) {
+        throw std::invalid_argument("make_point_defect_mps: x0 must be a grid point");
+    }
+
+    if (background == Scalar(0)) {
+        auto mps = make_basis_mps<Scalar>(bits);
+        mps *= point_value;
+        return {std::move(mps), std::move(grid)};
+    }
+
+    const bool constant = background == point_value;
+    std::vector<Tensor3D<Scalar>> cores;
+    cores.reserve(static_cast<std::size_t>(nbit));
+    for (int bit = 0; bit < nbit; ++bit) {
+        const bool first = bit == 0;
+        const bool last = bit == nbit - 1;
+        Tensor3D<Scalar> core(first || constant ? 1 : 2, 2,
+                              last || constant ? 1 : 2);
+        for (int physical = 0; physical < 2; ++physical) {
+            const bool matches = physical == bits[static_cast<std::size_t>(bit)];
+            if (constant) {
+                core(0, physical, 0) = first ? background : Scalar(1);
+            } else if (first && last) {
+                core(0, physical, 0) = matches ? point_value : background;
+            } else if (first) {
+                core(0, physical, matches ? 0 : 1) = Scalar(1);
+            } else if (last) {
+                core(0, physical, 0) = matches ? point_value : background;
+                core(1, physical, 0) = background;
+            } else {
+                // State 0 still matches; state 1 already differs.
+                core(0, physical, matches ? 0 : 1) = Scalar(1);
+                core(1, physical, 1) = Scalar(1);
+            }
+        }
+        cores.push_back(std::move(core));
+    }
+
+    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
+                    /*reltol=*/-1, /*w=*/-1);
+    return {std::move(mps), std::move(grid)};
+}
+
 /// Construct H(x-x0), or H(x0-x) when rev is true, as a rank-at-most-two MPS.
 /// Returns {mps, grid} on [a,b), with least-significant-bit-first cores.
 /// fixed_to_left=true snaps an off-grid x0 to the neighboring point on its
@@ -158,6 +231,21 @@ make_heaviside_mps(
     MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
                     /*reltol=*/-1, /*w=*/-1);
     return {std::move(mps), std::move(grid)};
+}
+
+/// Construct the exclusive unit-step kernel on [0,length): zero at the
+/// first sample and one at every subsequent sample. Returns {mps, grid}
+/// by reusing make_heaviside_mps with H(0)=0 and no reversal.
+template<typename Scalar = double, typename Sint = util::i128>
+std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+make_exclusive_heaviside_mps(
+    typename Eigen::NumTraits<Scalar>::Real length,
+    int nbit)
+{
+    using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
+    return make_heaviside_mps<Scalar, Sint>(
+        RealScalar(0), length, nbit, RealScalar(0),
+        /*rev=*/false, /*fixed_to_left=*/false, "zero");
 }
 
 /// Construct a window H(x-x0) * H(x1-x), requiring x0 < x1.
