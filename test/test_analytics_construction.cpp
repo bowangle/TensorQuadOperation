@@ -64,7 +64,7 @@ template<typename Real, typename Function>
 void require_all_grid_values(
     const char* name,
     const MPS<Real>& mps,
-    const QTGrid<Real, util::i128>& grid,
+    const qtgrid::QTGrid<Real, util::i128>& grid,
     Function expected,
     bool exact = false)
 {
@@ -206,7 +206,7 @@ TEMPLATE_TEST_CASE("Analytic MPS values match their functions at every 4-bit gri
 
     SECTION("Basis MPS") {
         const auto mps = make_basis_mps<Real>({0, 1, 0, 1});
-        const QTGrid<Real, util::i128> grid(a, b, nbit);
+        const qtgrid::QTGrid<Real, util::i128> grid(a, b, nbit);
         require_all_grid_values("Basis MPS", mps, grid,
             [](Real, std::size_t index) { return index == 10 ? Real(1) : Real(0); },
             /*exact=*/true);
@@ -220,7 +220,7 @@ TEMPLATE_TEST_CASE("Analytic MPS values match their functions at every 4-bit gri
     }
 
     SECTION("Point defect MPS: every grid point and background/value combinations") {
-        const QTGrid<Real, util::i128> defect_grid(a, b, nbit);
+        const qtgrid::QTGrid<Real, util::i128> defect_grid(a, b, nbit);
         constexpr std::size_t count = std::size_t{1} << nbit;
         const std::vector<std::pair<Real, Real>> choices{
             {Real(1), Real(0)}, {Real(-2), Real(3)},
@@ -255,7 +255,7 @@ TEMPLATE_TEST_CASE("Analytic MPS values match their functions at every 4-bit gri
     }
 
     SECTION("Heaviside MPS: every grid jump, both directions and all jump values") {
-        const QTGrid<Real, util::i128> jump_grid(a, b, nbit);
+        const qtgrid::QTGrid<Real, util::i128> jump_grid(a, b, nbit);
         constexpr std::size_t jump_count = std::size_t{1} << nbit;
         for (std::size_t jump_index = 0; jump_index < jump_count; ++jump_index) {
             const Real x0 = a + Real(jump_index) * jump_grid.get_dx();
@@ -282,7 +282,7 @@ TEMPLATE_TEST_CASE("Analytic MPS values match their functions at every 4-bit gri
     }
 
     SECTION("Step MPS: every ordered pair of grid endpoints and all jump values") {
-        const QTGrid<Real, util::i128> endpoint_grid(a, b, nbit);
+        const qtgrid::QTGrid<Real, util::i128> endpoint_grid(a, b, nbit);
         const Real dx = endpoint_grid.get_dx();
         constexpr std::size_t endpoint_count = std::size_t{1} << nbit;
         for (std::size_t begin_index = 0; begin_index < endpoint_count; ++begin_index) {

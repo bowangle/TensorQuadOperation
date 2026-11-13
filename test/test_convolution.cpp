@@ -29,7 +29,7 @@ inline std::vector<int> index_bits(std::size_t index, int nbit)
 
 template<typename Real>
 struct FunctionCase {
-    using Grid = QTGrid<Real, util::i128>;
+    using Grid = qtgrid::QTGrid<Real, util::i128>;
     std::string name;
     MPS<Real> mps;
     Grid grid;

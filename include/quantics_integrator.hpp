@@ -4,8 +4,8 @@
 #include "mpo_base.h"
 
 #include <type_int128.h>
-#include <xf-qd-runner.hpp>
-#include <xf-quad-param.hpp>
+#include <xfac_quad_runner/xf-qd-runner.hpp>
+#include <xfac_quad_runner/xf-quad-param.hpp>
 
 #include <Eigen/Dense>
 #include <spdlog/logger.h>
@@ -23,12 +23,12 @@
 /// Parameters required by QuanticsIntegrator1D::fit():
 ///
 /// 1. Grid grid
-///      QTGrid<RealScalar, Sint>(a, b, nBits), defining [a,b).
+///      qtgrid::QTGrid<RealScalar, Sint>(a, b, nBits), defining [a,b).
 /// 2. Function function
 ///      std::function<Scalar(RealScalar)> evaluated on the grid.
 /// 3. RunnerParam parameters
-///      TCI2_1D_runner_param<Scalar>, containing nBits, nb_iter, bondDim,
-///      and all TCI2_1D_runner_opts settings.
+///      xfac_quad_runner::TCI2_1D_runner_param<Scalar>, containing nBits,
+///      nb_iter, bondDim, and all xfac_quad_runner::TCI2_1D_runner_opts settings.
 /// 4. std::string save_prefix
 ///      Prefix used for the generated TT, grid, and error files.
 /// 5. FitOptions options (optional)
@@ -52,10 +52,10 @@ template<typename Scalar, typename Sint = util::i128>
 class QuanticsIntegrator1D {
 public:
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid        = QTGrid<RealScalar, Sint>;
+    using Grid        = qtgrid::QTGrid<RealScalar, Sint>;
     using State       = MPS<Scalar>;
     using Function    = std::function<Scalar(RealScalar)>;
-    using RunnerParam = TCI2_1D_runner_param<Scalar>;
+    using RunnerParam = xfac_quad_runner::TCI2_1D_runner_param<Scalar>;
     using LoggerPtr   = std::shared_ptr<spdlog::logger>;
     using MatrixX     = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
@@ -125,7 +125,7 @@ public:
         } else {
             const RealScalar reltol = parameters.reltol;
             const int max_bond_dim = parameters.bondDim;
-            TCI2_1D_Runner<Scalar, Sint> runner(
+            xfac_quad_runner::TCI2_1D_Runner<Scalar, Sint> runner(
                 std::move(grid), std::move(parameters), std::move(function),
                 std::move(logger));
 

@@ -214,7 +214,7 @@ QuanticsIntegralResults<Real> integrate_quantics(Function&& function,
 
     constexpr int nbits = nbits_for<Real>;
     typename Integrator::Grid grid(a, b, nbits);
-    TCI2_1D_runner_opts<Complex> runner_options;
+    xfac_quad_runner::TCI2_1D_runner_opts<Complex> runner_options;
     runner_options.reltol = settings.reltol;
     runner_options.pivot1 = grid.coord_to_id((a + b) / Real(2));
     typename Integrator::RunnerParam parameters(
@@ -510,11 +510,11 @@ TEST_CASE("batched integration benchmark on a high-rank trigonometric fit",
     CAPTURE(a, b);
     constexpr int nbits = 49;
     typename Integrator::Grid grid(a, b, nbits);
-    TCI2_1D_runner_opts<Complex> runner_options;
+    xfac_quad_runner::TCI2_1D_runner_opts<Complex> runner_options;
     runner_options.reltol = 1e-12;
     runner_options.pivot1 = grid.coord_to_id(0.37123456789);
     runner_options.fullPiv = true;
-    runner_options.cache = CacheLevel::runner;
+    runner_options.cache = xfac_quad_runner::CacheLevel::runner;
     typename Integrator::RunnerParam parameters(
         nbits, /*nb_iter=*/60, /*bondDim=*/64, runner_options);
 
@@ -753,7 +753,7 @@ TEST_CASE("quantics integrator forwards fit diagnostics to spdlog",
     CAPTURE(a, b);
     constexpr int nbits = 8;
     typename Integrator::Grid grid(a, b, nbits);
-    TCI2_1D_runner_opts<Complex> runner_options;
+    xfac_quad_runner::TCI2_1D_runner_opts<Complex> runner_options;
     runner_options.reltol = 1e-12;
     runner_options.pivot1 = grid.coord_to_id(0.5);
     runner_options.fullPiv = true;

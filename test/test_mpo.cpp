@@ -4,7 +4,7 @@
 #include "mps_base.h"
 #include "mpo_base.h"
 
-#include "xf-qd-runner.hpp"
+#include <xfac_quad_runner/xf-qd-runner.hpp>
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
@@ -92,12 +92,12 @@ void do_save_TCI(
     const std::string& filename,
     int nb_point_out){
     using Real = typename Eigen::NumTraits<Scalar>::Real;
-    QTGrid<Real, long long> grid(a_1, b_1, nBit);
+    qtgrid::QTGrid<Real, long long> grid(a_1, b_1, nBit);
 
     std::vector<int> pivot1 = grid.coord_to_id(c0);
 
-    TCI2_1D_runner_param<Scalar> tci_param(nBit, n_iter, 100,
-        {.pivot1 = pivot1, .fullPiv = true, .cache = CacheLevel::runner});
+    xfac_quad_runner::TCI2_1D_runner_param<Scalar> tci_param(nBit, n_iter, 100,
+        {.pivot1 = pivot1, .fullPiv = true, .cache = xfac_quad_runner::CacheLevel::runner});
 
     std::string logger_name = "logger_" + log_filename;
     auto logger = spdlog::get(logger_name);
@@ -106,7 +106,7 @@ void do_save_TCI(
         logger = spdlog::basic_logger_mt(logger_name, "test/output/" + log_filename);
     }
 
-    TCI2_1D_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
+    xfac_quad_runner::TCI2_1D_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
 
     std::vector<Real> additional_pivot = {};
 
@@ -156,7 +156,7 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
 
     // fill all the data define just before
     {
-        QTGrid<Real, Sint> grid_1(filename_1 + "_grid_E.json");
+        qtgrid::QTGrid<Real, Sint> grid_1(filename_1 + "_grid_E.json");
 
         points = mps_f1.generate_points(n_points);
 

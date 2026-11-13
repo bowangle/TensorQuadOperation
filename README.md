@@ -30,7 +30,7 @@ cd TensorQuadOperation
 bash install_extern.sh
 ```
 
-This initialises all submodules and builds the `xfac_quad_runner` dependency chain (Eigen, QD, spdlog, QTgrid‑quad, numeric‑type‑quad).
+This initialises all submodules and sets up the merged `xfac_quad` dependency (QTGrid, numerical core, and runners), including Eigen, QD, spdlog, JSON, and numeric‑type‑quad.
 
 ### Step 3 – Compile
 
@@ -223,7 +223,7 @@ TensorQuadOperation/
 │   ├── test_mps.cpp
 │   ├── test_compress_svd.cpp
 │   └── test_mpo.cpp
-├── extern/               # External dependencies (xfac_quad_runner & friends)
+├── extern/               # External dependencies (xfac_quad and Catch2)
 ├── build/                # CMake build directory
 ├── CMakeLists.txt
 ├── compile.sh            # CMake configure + build

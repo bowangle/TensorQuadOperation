@@ -10,11 +10,11 @@ option(TQ_BUILD_TESTS
 # ---- dependencies -------------------------------------------------------------
 find_package(OpenMP REQUIRED)
 
-# xfac_quad_runner manages itself (and transitively xfac_quad, QTgrid-quad,
-# numeric-type-quad, QD, spdlog). Its tests, and those of every layer below it,
-# stay off unless the matching <LAYER>_BUILD_TESTS option is explicitly set.
-if(NOT TARGET xf_qd_runner_deps)
-    add_subdirectory(extern/xfac_quad_runner)
+# xfac_quad provides grids, numerical headers, and runners, and manages its
+# external dependencies. Its tests stay off unless XFAC_QUAD_BUILD_TESTS is
+# explicitly enabled; numeric-type-quad likewise controls its own tests.
+if(NOT TARGET xfac_quad_deps)
+    add_subdirectory(extern/xfac_quad)
 endif()
 
 # ---- own paths ----------------------------------------------------------------
@@ -31,7 +31,7 @@ target_include_directories(tensorquad_deps INTERFACE
 target_compile_features(tensorquad_deps INTERFACE cxx_std_20)
 
 target_link_libraries(tensorquad_deps INTERFACE
-    xf_qd_runner_deps
+    xfac_quad_deps
     OpenMP::OpenMP_CXX)
 
 # ---- test-only interface: shared test helpers in test/ ------------------------

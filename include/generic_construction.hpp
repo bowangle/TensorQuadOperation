@@ -3,7 +3,7 @@
 #include "mps_base.h"
 
 #include <pi.h>
-#include <grid.h>
+#include <QTgrid-quad/grid.h>
 #include <type_int128.h>
 
 #include <cmath>
@@ -53,7 +53,7 @@ MPS<Scalar> make_basis_mps(const std::vector<int>& bits)
 /// point value or background directly, without subtractive cancellation.
 /// No TCI, truncation, or canonicalization is performed.
 template<typename Scalar = double, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_point_defect_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -63,7 +63,7 @@ make_point_defect_mps(
     Scalar point_value = Scalar(0))
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid = QTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
     using std::isfinite;
 
     if (nbit <= 0) {
@@ -127,7 +127,7 @@ make_point_defect_mps(
 /// Scalar defaults to double and may be complex; coordinates use its real type.
 /// No TCI, truncation, or canonicalization is performed.
 template<typename Scalar = double, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_heaviside_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -138,7 +138,7 @@ make_heaviside_mps(
     const std::string& discontinuity_mode = "one")
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid = QTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
     using std::isfinite;
 
     if (nbit <= 0) {
@@ -237,7 +237,7 @@ make_heaviside_mps(
 /// first sample and one at every subsequent sample. Returns {mps, grid}
 /// by reusing make_heaviside_mps with H(0)=0 and no reversal.
 template<typename Scalar = double, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_exclusive_heaviside_mps(
     typename Eigen::NumTraits<Scalar>::Real length,
     int nbit)
@@ -259,7 +259,7 @@ make_exclusive_heaviside_mps(
 /// windows with only one visible endpoint reuse the rank-two Heaviside.
 /// No product MPS, TCI, SVD, truncation, or canonicalization is used.
 template<typename Scalar = double, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_step_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -270,7 +270,7 @@ make_step_mps(
     const std::string& discontinuity_mode = "one")
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid = QTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
     using Result = std::pair<MPS<Scalar>, Grid>;
     using std::isfinite;
 
@@ -404,7 +404,7 @@ make_step_mps(
 /// [1, exp(phi * dx * 2^k)]. The first core also carries rho * exp(a * phi).
 /// No TCI, truncation, or canonicalization is performed.
 template<typename Scalar, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_exp_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -413,7 +413,7 @@ make_exp_mps(
     Scalar phi)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid = QTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
     using std::exp;
 
     if (nbit <= 0) {
@@ -456,7 +456,7 @@ make_exp_mps(
 /// boundary contractions are contained in the single rank-one core.
 /// No TCI, truncation, or canonicalization is performed.
 template<typename Scalar, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_cos_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -466,7 +466,7 @@ make_cos_mps(
     Scalar C)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid = QTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
     using std::cos;
     using std::sin;
 
@@ -522,7 +522,7 @@ make_cos_mps(
 /// Construct A * sin(B*x + C) by reusing make_cos_mps with phase C-pi/2.
 /// Returns {mps, grid} with the same grid and rank bounds as make_cos_mps.
 template<typename Scalar, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_sin_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -546,7 +546,7 @@ make_sin_mps(
 /// No TCI, truncation, or canonicalization is performed; only floating-point
 /// rounding limits the exact polynomial representation.
 template<typename Scalar, typename Sint = util::i128>
-std::pair<MPS<Scalar>, QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
+std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_polynomial_orderp_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
@@ -554,7 +554,7 @@ make_polynomial_orderp_mps(
     const std::vector<Scalar>& coefficients)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-    using Grid = QTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
 
     if (nbit <= 0) {
         throw std::invalid_argument("make_polynomial_orderp_mps: nbit must be positive");
