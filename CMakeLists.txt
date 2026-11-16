@@ -63,6 +63,7 @@ if(TQ_BUILD_TESTS)
         test_Mat_SVDDecomp
         test_tt_base
         test_mps
+        test_ttn
         test_compress_svd
         test_mpo
         test_quantics_integrator
@@ -79,4 +80,7 @@ if(TQ_BUILD_TESTS)
         add_test(NAME tq_test_${_name}
                  COMMAND tq_test_${_name})
     endforeach()
+
+    set_tests_properties(tq_test_test_ttn PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

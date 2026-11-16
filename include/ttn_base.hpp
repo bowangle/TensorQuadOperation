@@ -98,7 +98,7 @@ public:
     }
 
     // SVD-compress all bonds while preserving the canonical centre.
-    void compress_svd(RealScalar reltol = RealScalar(-1), int max_bond_dim = -1)
+    void compress_svd(RealScalar reltol_ = RealScalar(-1), int max_bond_dim_ = -1)
     {
         const auto& tree = ttn_body.tree;
         const int center = (w == -1) ? tree.root : w;
@@ -108,7 +108,7 @@ public:
         // SVD compresses each bond once on the return to its parent.
         // Every decomposition starts at the current canonical centre.
         std::vector<int> path{center};
-        xfac_quad::MatSVDFixedTol<T> decompose{reltol, max_bond_dim};
+        xfac_quad::MatSVDFixedTol<T> decompose{reltol_, max_bond_dim_};
         for (const auto& [from, to] : tree.rootToLeaves(center)) {
             if (path.size() > 1 && to == path[path.size() - 2]) {
                 xfac_quad::compress_bond(

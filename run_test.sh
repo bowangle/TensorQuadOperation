@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Remove existing test output files (if any)
 rm -f "$SCRIPT_DIR/test/test_Mat_QR.txt" "$SCRIPT_DIR/test/test_Mat_SVDDecomp.txt" "$SCRIPT_DIR/test/test_Tensor3D.txt" "$SCRIPT_DIR/test/test_TT_base.txt" "$SCRIPT_DIR/test/test_mps.txt" "$SCRIPT_DIR/test/test_compress_svd.txt" "$SCRIPT_DIR/test/test_mpo.txt" "$SCRIPT_DIR/test/test_indefinite_integral.txt" "$SCRIPT_DIR/test/test_quantics_integrator.txt" "$SCRIPT_DIR/test/test_convolution.txt" "$SCRIPT_DIR/test/test_analytics_construction.txt"
 
+rm -f "$SCRIPT_DIR/test/test_ttn.txt"
+
 cd "$SCRIPT_DIR"
 
 # Run tests in parallel and redirect output
@@ -13,6 +15,7 @@ cd "$SCRIPT_DIR"
 ./build/tq_test_test_Tensor3D     > "$SCRIPT_DIR/test/test_Tensor3D.txt"    2>&1 &
 ./build/tq_test_test_tt_base      > "$SCRIPT_DIR/test/test_TT_base.txt"     2>&1 &
 ./build/tq_test_test_mps          > "$SCRIPT_DIR/test/test_mps.txt"    2>&1 &
+./build/tq_test_test_ttn          > "$SCRIPT_DIR/test/test_ttn.txt"    2>&1 &
 ./build/tq_test_test_compress_svd  > "$SCRIPT_DIR/test/test_compress_svd.txt" 2>&1 &
 ./build/tq_test_test_mpo          > "$SCRIPT_DIR/test/test_mpo.txt"         2>&1 &
 ./build/tq_test_test_indefinite_integral > "$SCRIPT_DIR/test/test_indefinite_integral.txt" 2>&1 &
