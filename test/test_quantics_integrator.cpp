@@ -324,16 +324,16 @@ TEST_CASE("direct and batched range sums match explicit MPS values",
     constexpr int nbits = 5;
     constexpr int point_count = 1 << nbits;
     const std::vector<Eigen::Index> bonds = {1, 2, 3, 2, 2, 1};
-    std::vector<Tensor3D<Complex>> cores;
+    std::vector<xfac_quad::Tensor3D<Complex>> cores;
     cores.reserve(nbits);
     for (int site = 0; site < nbits; ++site) {
-        Tensor3D<Complex> core(
+        xfac_quad::Tensor3D<Complex> core(
             bonds[static_cast<std::size_t>(site)],
             2,
             bonds[static_cast<std::size_t>(site + 1)]);
-        for (Eigen::Index left = 0; left < core.n_left; ++left) {
-            for (Eigen::Index bit = 0; bit < core.n_phys; ++bit) {
-                for (Eigen::Index right = 0; right < core.n_right; ++right) {
+        for (Eigen::Index left = 0; left < core.n_rows; ++left) {
+            for (Eigen::Index bit = 0; bit < core.n_cols; ++bit) {
+                for (Eigen::Index right = 0; right < core.n_slices; ++right) {
                     const double base =
                         0.03 * (site + 1) + 0.07 * (left + 1)
                         + 0.05 * (bit + 1) + 0.02 * (right + 1);

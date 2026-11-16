@@ -95,13 +95,13 @@ void require_structure(const MPS<Real>& mps, int nbit)
 {
     const auto& cores = mps.get_core();
     REQUIRE(cores.size() == static_cast<std::size_t>(nbit));
-    REQUIRE(cores.front().n_left == 1);
-    REQUIRE(cores.back().n_right == 1);
+    REQUIRE(cores.front().n_rows == 1);
+    REQUIRE(cores.back().n_slices == 1);
     for (std::size_t bit = 0; bit < cores.size(); ++bit) {
         CAPTURE(bit);
-        REQUIRE(cores[bit].n_phys == 2);
+        REQUIRE(cores[bit].n_cols == 2);
         if (bit > 0) {
-            REQUIRE(cores[bit - 1].n_right == cores[bit].n_left);
+            REQUIRE(cores[bit - 1].n_slices == cores[bit].n_rows);
         }
     }
 }

@@ -1,6 +1,6 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
-#include "tensor.h"
+#include <xfac_quad/cubemat_helper.h>
 #include "tt_base.h"
 #include <iostream>
 #include <complex>
@@ -8,6 +8,8 @@
 #include <cassert>
 #include <chrono>
 #include <Eigen/Dense>
+
+using xfac_quad::Tensor3D;
 
 // ---------------------------------------------------------------------------
 // Helper: cast size_t index to double first to avoid ambiguous conversions
@@ -27,7 +29,7 @@ template<class Scalar>
 static void fillDeterministic(Tensor3D<Scalar>& t)
 {
     using Real = typename Eigen::NumTraits<Scalar>::Real;
-    const size_t L = t.n_left, P = t.n_phys, R = t.n_right;
+    const size_t L = t.n_rows, P = t.n_cols, R = t.n_slices;
 
     for (size_t r = 0; r < R; ++r)
         for (size_t p = 0; p < P; ++p)
@@ -51,7 +53,7 @@ template<class Scalar>
 static void testAccessCorrectness(Tensor3D<Scalar>& t, const std::string& label)
 {
     using Real = typename Eigen::NumTraits<Scalar>::Real;
-    const size_t L = t.n_left, P = t.n_phys, R = t.n_right;
+    const size_t L = t.n_rows, P = t.n_cols, R = t.n_slices;
 
     auto t0 = std::chrono::steady_clock::now();
     bool ok = true;
@@ -89,7 +91,7 @@ static void testRightView(Tensor3D<Scalar>& t, const std::string& label)
     else
         sentinel = Scalar(Real(9999.0));
 
-    auto v = t.right(0);
+    auto v = t.slice(0);
     v(0, 0) = sentinel;
     bool aliases = (t(0, 0, 0) == sentinel);
 
@@ -111,7 +113,7 @@ static void testPhysView(Tensor3D<Scalar>& t, const std::string& label)
     else
         sentinel = Scalar(Real(8888.0));
 
-    auto v = t.phys(1);
+    auto v = t.col_as_mat(1);
     v(0, 0) = sentinel;
     bool aliases = (t(0, 1, 0) == sentinel);
 
@@ -133,7 +135,7 @@ static void testLeftView(Tensor3D<Scalar>& t, const std::string& label)
     else
         sentinel = Scalar(Real(7777.0));
 
-    auto v = t.left(1);
+    auto v = t.row_as_mat(1);
     v(0, 0) = sentinel;
     bool aliases = (t(1, 0, 0) == sentinel);
 
@@ -157,7 +159,7 @@ static void testRightCopy(Tensor3D<Scalar>& t, const std::string& label)
 
     // snapshot what t(0,0,0) holds before the copy write
     Scalar before = t(0, 0, 0);
-    auto c = t.right_copy(0);
+    auto c = t.slice_copy(0);
     c(0, 0) = sentinel;
     bool independent = (t(0, 0, 0) == before);
 
@@ -180,7 +182,7 @@ static void testPhysCopy(Tensor3D<Scalar>& t, const std::string& label)
         sentinel = Scalar(Real(54321.0));
 
     Scalar before = t(0, 0, 0);
-    auto c = t.phys_copy(0);
+    auto c = t.col_as_mat_copy(0);
     c(0, 0) = sentinel;
     bool independent = (t(0, 0, 0) == before);
 
@@ -193,10 +195,10 @@ static void testPhysCopy(Tensor3D<Scalar>& t, const std::string& label)
 template<class Scalar>
 static void testFlattenPhysLeft(Tensor3D<Scalar>& t, const std::string& label)
 {
-    const size_t L = t.n_left, P = t.n_phys, R = t.n_right;
+    const size_t L = t.n_rows, P = t.n_cols, R = t.n_slices;
     auto t0 = std::chrono::steady_clock::now();
 
-    auto f = t.flatten_phys(true);
+    auto f = t.flatten_middle(true);
     bool ok = true;
     for (size_t r = 0; r < R && ok; ++r)
         for (size_t p = 0; p < P && ok; ++p)
@@ -212,10 +214,10 @@ static void testFlattenPhysLeft(Tensor3D<Scalar>& t, const std::string& label)
 template<class Scalar>
 static void testFlattenPhysRight(Tensor3D<Scalar>& t, const std::string& label)
 {
-    const size_t L = t.n_left, P = t.n_phys, R = t.n_right;
+    const size_t L = t.n_rows, P = t.n_cols, R = t.n_slices;
     auto t0 = std::chrono::steady_clock::now();
 
-    auto f = t.flatten_phys(false);
+    auto f = t.flatten_middle(false);
     bool ok = true;
     for (size_t r = 0; r < R && ok; ++r)
         for (size_t p = 0; p < P && ok; ++p)
@@ -243,8 +245,8 @@ static void testViewCopyConsistency(Tensor3D<Scalar>& t, const std::string& labe
         sc = Scalar(Real(2222.0));
     }
 
-    auto v = t.right(0);
-    auto c = t.right_copy(0);
+    auto v = t.slice(0);
+    auto c = t.slice_copy(0);
     v(0, 1) = sv;
     c(0, 1) = sc;
 
@@ -300,7 +302,7 @@ static void runAll(const std::string& type, const std::string& tt_file)
     // => only load from file for Cdd_128 (the one type we know works).
     if constexpr (std::is_same_v<Scalar, Cdd_128>)
     {
-        auto tt = load_vector_tensor<Scalar>(tt_file);
+        auto tt = xfac_quad::load_vector_tensor<Scalar>(tt_file);
         Tensor3D<Scalar> t = tt[5];
         runTensorTests(t, type + " TT[5]");
     }

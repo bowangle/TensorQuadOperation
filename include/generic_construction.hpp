@@ -17,6 +17,8 @@
 
 namespace analytic_mps_construction {
 
+using xfac_quad::Tensor3D;
+
 /// Construct the rank-one basis MPS that is one at the supplied bit string
 /// and zero at every other bit string. bits[k] selects the physical index
 /// of core k; bits[0] is the least-significant bit in the QTGrid convention.

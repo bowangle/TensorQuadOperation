@@ -9,12 +9,12 @@
 #include <array>       // for std::array
 #include <vector>      // for std::vector (VecTT)
 #include <algorithm>   // for std::copy
-#include "tensor.h"
+#include <xfac_quad/cubemat_helper.h>
 #include "mat_decomp.h"
 
 template<typename T>
 class TT{
-    using VecTT = std::vector<Tensor3D<T>>;
+    using VecTT = std::vector<xfac_quad::Tensor3D<T>>;
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     using RealScalar = typename Eigen::NumTraits<T>::Real;
 
@@ -44,7 +44,7 @@ class TT{
     // from file
     TT(const std::string& filename, int max_bond_dim_=0, RealScalar reltol_=-1, int w_=0)
     :
-        core(std::move(load_vector_tensor<T>(filename))),
+        core(std::move(xfac_quad::load_vector_tensor<T>(filename))),
         nBit(core.size()),
         w(-1),
         max_bond_dim_param(max_bond_dim_),
@@ -73,7 +73,7 @@ class TT{
 
     void save(const std::string& file_prefix) const
     {
-        save_Tensor3D_to_arma(core, file_prefix + ".tt");
+        xfac_quad::save_Tensor3D_to_arma(core, file_prefix + ".tt");
     }
 
     // Return the shape of each tensor as a vector of tuples (n_left, n_phys, n_right)
@@ -82,7 +82,7 @@ class TT{
         std::vector<std::tuple<Eigen::Index, Eigen::Index, Eigen::Index>> s;
         s.reserve(core.size());
         for (auto const& t : core)
-            s.emplace_back(t.n_left, t.n_phys, t.n_right);
+            s.emplace_back(t.n_rows, t.n_cols, t.n_slices);
         return s;
     }
 
@@ -91,7 +91,7 @@ class TT{
     {
         Eigen::Index max_chi = 0;
         for (int i = 0; i < static_cast<int>(core.size()) - 1; i++)
-            max_chi = std::max(max_chi, core[i].n_right);
+            max_chi = std::max(max_chi, core[i].n_slices);
         return max_chi;
     }
 
@@ -100,7 +100,7 @@ class TT{
         if (int(id.size()) != nBit) throw std::invalid_argument("TT::eval: id.size() != nBit");
         MatrixX a = MatrixX::Identity(1, 1), b;
         for (int k = 0; k < nBit; k++) {
-            b.noalias() = a * core[k].phys_const(id[k]);
+            b.noalias() = a * core[k].col_as_mat_const(id[k]);
             a.swap(b);
         }
         return a(0, 0);
@@ -118,11 +118,11 @@ class TT{
             MatrixX  M2 = ab[1] * core[i+1].flatten_as_matrix1();
 
             Eigen::Index new_right = M1.cols();
-            core[i] = Tensor3D<T>(core[i].n_left, core[i].n_phys, new_right);
+            core[i] = xfac_quad::Tensor3D<T>(core[i].n_rows, core[i].n_cols, new_right);
             std::copy(M1.data(), M1.data() + M1.size(), core[i].data.begin());
 
             Eigen::Index new_left = M2.rows();
-            core[i+1] = Tensor3D<T>(new_left, core[i+1].n_phys, core[i+1].n_right);
+            core[i+1] = xfac_quad::Tensor3D<T>(new_left, core[i+1].n_cols, core[i+1].n_slices);
             std::copy(M2.data(), M2.data() + M2.size(), core[i+1].data.begin());
         }
     }
@@ -139,12 +139,12 @@ class TT{
 
             // Write M1 back into VecTT[i-1]
             Eigen::Index new_right = M1.cols();
-            core[i-1] = Tensor3D<T>(core[i-1].n_left, core[i-1].n_phys, new_right);
+            core[i-1] = xfac_quad::Tensor3D<T>(core[i-1].n_rows, core[i-1].n_cols, new_right);
             std::copy(M1.data(), M1.data() + M1.size(), core[i-1].data.begin());
 
             // Write M2 back into VecTT[i]
             Eigen::Index new_left = M2.rows();
-            core[i] = Tensor3D<T>(new_left, core[i].n_phys, core[i].n_right);
+            core[i] = xfac_quad::Tensor3D<T>(new_left, core[i].n_cols, core[i].n_slices);
             std::copy(M2.data(), M2.data() + M2.size(), core[i].data.begin());
         }
     }
@@ -174,11 +174,11 @@ class TT{
         MatrixX& R = ab[1];
 
         if (!compress) {
-            core[k] = Tensor3D<T>(core[k].n_left, core[k].n_phys, Q.cols());
+            core[k] = xfac_quad::Tensor3D<T>(core[k].n_rows, core[k].n_cols, Q.cols());
             std::copy(Q.data(), Q.data() + Q.size(), core[k].data.begin());
 
             MatrixX M2 = R * core[k+1].flatten_as_matrix1();
-            core[k+1] = Tensor3D<T>(M2.rows(), core[k+1].n_phys, core[k+1].n_right);
+            core[k+1] = xfac_quad::Tensor3D<T>(M2.rows(), core[k+1].n_cols, core[k+1].n_slices);
             std::copy(M2.data(), M2.data() + M2.size(), core[k+1].data.begin());
         }
         else {
@@ -189,11 +189,11 @@ class TT{
             MatrixX Qnew = Q * svd.left();     // Q * U          : (n_left*n_phys) × mu
             MatrixX Rnew = svd.right();        // diag(s) * V^H  : mu × n_right_old
 
-            core[k] = Tensor3D<T>(core[k].n_left, core[k].n_phys, mu);
+            core[k] = xfac_quad::Tensor3D<T>(core[k].n_rows, core[k].n_cols, mu);
             std::copy(Qnew.data(), Qnew.data() + Qnew.size(), core[k].data.begin());
 
             MatrixX M2 = Rnew * core[k+1].flatten_as_matrix1();
-            core[k+1] = Tensor3D<T>(mu, core[k+1].n_phys, core[k+1].n_right);
+            core[k+1] = xfac_quad::Tensor3D<T>(mu, core[k+1].n_cols, core[k+1].n_slices);
             std::copy(M2.data(), M2.data() + M2.size(), core[k+1].data.begin());
         }
     }
@@ -206,11 +206,11 @@ class TT{
         MatrixX& Q = ab[1];   // K × (n_phys*n_right)
 
         if (!compress) {
-            core[k] = Tensor3D<T>(Q.rows(), core[k].n_phys, core[k].n_right);
+            core[k] = xfac_quad::Tensor3D<T>(Q.rows(), core[k].n_cols, core[k].n_slices);
             std::copy(Q.data(), Q.data() + Q.size(), core[k].data.begin());
 
             MatrixX M1 = core[k-1].flatten_as_matrix2() * L;
-            core[k-1] = Tensor3D<T>(core[k-1].n_left, core[k-1].n_phys, M1.cols());
+            core[k-1] = xfac_quad::Tensor3D<T>(core[k-1].n_rows, core[k-1].n_cols, M1.cols());
             std::copy(M1.data(), M1.data() + M1.size(), core[k-1].data.begin());
         }
         else {
@@ -221,11 +221,11 @@ class TT{
             MatrixX Qnew = svd.right() * Q;    // V^H * Q        : mu × (n_phys*n_right)
             MatrixX Lnew = svd.left();         // U * diag(s)    : n_left × mu
 
-            core[k] = Tensor3D<T>(mu, core[k].n_phys, core[k].n_right);
+            core[k] = xfac_quad::Tensor3D<T>(mu, core[k].n_cols, core[k].n_slices);
             std::copy(Qnew.data(), Qnew.data() + Qnew.size(), core[k].data.begin());
 
             MatrixX M1 = core[k-1].flatten_as_matrix2() * Lnew;
-            core[k-1] = Tensor3D<T>(core[k-1].n_left, core[k-1].n_phys, mu);
+            core[k-1] = xfac_quad::Tensor3D<T>(core[k-1].n_rows, core[k-1].n_cols, mu);
             std::copy(M1.data(), M1.data() + M1.size(), core[k-1].data.begin());
         }
     }
@@ -318,10 +318,10 @@ class TT{
         if (nBit == 1) {
             auto const& a = core[0];
             auto const& b = other.core[0];
-            if (a.n_left != b.n_left || a.n_phys != b.n_phys || a.n_right != b.n_right)
+            if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.n_slices != b.n_slices)
                 throw std::invalid_argument("TT::operator+: incompatible single-site shapes");
 
-            Tensor3D<T> t(a.n_left, a.n_phys, a.n_right);
+            xfac_quad::Tensor3D<T> t(a.n_rows, a.n_cols, a.n_slices);
             for (std::size_t j = 0; j < t.data.size(); j++)
                 t.data[j] = a.data[j] + b.data[j];
 
@@ -337,13 +337,13 @@ class TT{
         {
             auto const& a = core[0];
             auto const& b = other.core[0];
-            if (a.n_left != b.n_left || a.n_phys != b.n_phys)
+            if (a.n_rows != b.n_rows || a.n_cols != b.n_cols)
                 throw std::invalid_argument("TT::operator+: incompatible first cores");
 
-            Tensor3D<T> t(a.n_left, a.n_phys, a.n_right + b.n_right);  // zero-initialized
-            for (Eigen::Index p = 0; p < a.n_phys; p++) {
-                t.phys(p).leftCols(a.n_right)  = a.phys_const(p);
-                t.phys(p).rightCols(b.n_right) = b.phys_const(p);
+            xfac_quad::Tensor3D<T> t(a.n_rows, a.n_cols, a.n_slices + b.n_slices);  // zero-initialized
+            for (Eigen::Index p = 0; p < a.n_cols; p++) {
+                t.col_as_mat(p).leftCols(a.n_slices)  = a.col_as_mat_const(p);
+                t.col_as_mat(p).rightCols(b.n_slices) = b.col_as_mat_const(p);
             }
             res.push_back(std::move(t));
         }
@@ -352,13 +352,13 @@ class TT{
         for (int i = 1; i < nBit - 1; i++) {
             auto const& a = core[i];
             auto const& b = other.core[i];
-            if (a.n_phys != b.n_phys)
+            if (a.n_cols != b.n_cols)
                 throw std::invalid_argument("TT::operator+: the physical dimensions of the two TTs are different");
 
-            Tensor3D<T> t(a.n_left + b.n_left, a.n_phys, a.n_right + b.n_right);  // zero-initialized
-            for (Eigen::Index p = 0; p < a.n_phys; p++) {
-                t.phys(p).topLeftCorner(a.n_left, a.n_right)     = a.phys_const(p);
-                t.phys(p).bottomRightCorner(b.n_left, b.n_right) = b.phys_const(p);
+            xfac_quad::Tensor3D<T> t(a.n_rows + b.n_rows, a.n_cols, a.n_slices + b.n_slices);  // zero-initialized
+            for (Eigen::Index p = 0; p < a.n_cols; p++) {
+                t.col_as_mat(p).topLeftCorner(a.n_rows, a.n_slices)     = a.col_as_mat_const(p);
+                t.col_as_mat(p).bottomRightCorner(b.n_rows, b.n_slices) = b.col_as_mat_const(p);
             }
             res.push_back(std::move(t));
         }
@@ -367,13 +367,13 @@ class TT{
         {
             auto const& a = core[nBit - 1];
             auto const& b = other.core[nBit - 1];
-            if (a.n_phys != b.n_phys || a.n_right != b.n_right)
+            if (a.n_cols != b.n_cols || a.n_slices != b.n_slices)
                 throw std::invalid_argument("TT::operator+: incompatible last cores");
 
-            Tensor3D<T> t(a.n_left + b.n_left, a.n_phys, a.n_right);
-            for (Eigen::Index p = 0; p < a.n_phys; p++) {
-                t.phys(p).topRows(a.n_left)    = a.phys_const(p);
-                t.phys(p).bottomRows(b.n_left) = b.phys_const(p);
+            xfac_quad::Tensor3D<T> t(a.n_rows + b.n_rows, a.n_cols, a.n_slices);
+            for (Eigen::Index p = 0; p < a.n_cols; p++) {
+                t.col_as_mat(p).topRows(a.n_rows)    = a.col_as_mat_const(p);
+                t.col_as_mat(p).bottomRows(b.n_rows) = b.col_as_mat_const(p);
             }
             res.push_back(std::move(t));
         }
@@ -396,7 +396,7 @@ class TT{
 
         if (scalar == T(0)) {
             for (int i = 0; i < nBit; i++)
-                res.core[i] = Tensor3D<T>(1, core[i].n_phys, 1);  // zero-initialized
+                res.core[i] = xfac_quad::Tensor3D<T>(1, core[i].n_cols, 1);  // zero-initialized
             res.w = -1;
         }
         else {
@@ -438,7 +438,7 @@ class TT{
     {
         if (scalar == T(0)) {
             for (int i = 0; i < nBit; i++)
-                core[i] = Tensor3D<T>(1, core[i].n_phys, 1);
+                core[i] = xfac_quad::Tensor3D<T>(1, core[i].n_cols, 1);
             w = -1;
         }
         else {
@@ -475,7 +475,7 @@ class TT{
         for (auto& pt : points)
             for (int k = 0; k < nBit; k++)
             {
-                std::uniform_int_distribution<int> dist(0, core[k].n_phys - 1);
+                std::uniform_int_distribution<int> dist(0, core[k].n_cols - 1);
                 pt[k] = dist(rng);
             }
         return points;
@@ -497,7 +497,7 @@ class TT{
         chi.reserve(nBit + 1);
         chi.push_back(1);  // left boundary
         for (int i = 0; i < nBit; i++)
-            chi.push_back(static_cast<int>(core[i].n_right));
+            chi.push_back(static_cast<int>(core[i].n_slices));
         return chi;
     }
 
@@ -506,7 +506,7 @@ class TT{
         std::vector<Eigen::Index> nb;
         nb.reserve(nBit);
         for (int i = 0; i < nBit; i++)
-            nb.push_back(core[i].n_left * core[i].n_phys * core[i].n_right);
+            nb.push_back(core[i].n_rows * core[i].n_cols * core[i].n_slices);
         return nb;
     }
 
@@ -514,7 +514,7 @@ class TT{
     Eigen::Index compute_tot_nb_value() const {
         Eigen::Index tot = 0;
         for (int i = 0; i < nBit; i++)
-            tot += core[i].n_left * core[i].n_phys * core[i].n_right;
+            tot += core[i].n_rows * core[i].n_cols * core[i].n_slices;
         return tot;
     }
 

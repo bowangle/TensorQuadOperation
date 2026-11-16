@@ -26,14 +26,14 @@
 /// comparison tensors II in the usual presentation. The left boundary is the
 /// least-significant bit and is where `diagonal_value = Theta(0)` is applied.
 template<typename Scalar>
-Tensor3D<Scalar> make_heaviside_mpo_core(
+xfac_quad::Tensor3D<Scalar> make_heaviside_mpo_core(
     bool c_left,
     bool c_right,
     Scalar diagonal_value = Scalar(0))
 {
     // nothing on each side
     if (!c_left && !c_right) {
-        Tensor3D<Scalar> core(/*n_left=*/1, /*n_phys=*/4, /*n_right=*/1);
+        xfac_quad::Tensor3D<Scalar> core(/*n_left=*/1, /*n_phys=*/4, /*n_right=*/1);
         core(0, 0, 0) = diagonal_value; // n = m = 0
         core(0, 2, 0) = Scalar(1);      // n = 1, m = 0
         core(0, 3, 0) = diagonal_value; // n = m = 1
@@ -45,7 +45,7 @@ Tensor3D<Scalar> make_heaviside_mpo_core(
         // Least-significant-bit boundary. If all more-significant bits are
         // equal, this bit supplies Theta(0), 0, or 1. If n > m has already
         // been established, every local bit pair is accepted.
-        Tensor3D<Scalar> core(/*n_left=*/1, /*n_phys=*/4, /*n_right=*/2);
+        xfac_quad::Tensor3D<Scalar> core(/*n_left=*/1, /*n_phys=*/4, /*n_right=*/2);
         core(0, 0, 0) = diagonal_value;
         core(0, 0, 1) = Scalar(1);
         core(0, 1, 1) = Scalar(1);
@@ -57,7 +57,7 @@ Tensor3D<Scalar> make_heaviside_mpo_core(
     }
 
     // middle case: something on left and on right
-    Tensor3D<Scalar> middle(/*n_left=*/2, /*n_phys=*/4, /*n_right=*/2);
+    xfac_quad::Tensor3D<Scalar> middle(/*n_left=*/2, /*n_phys=*/4, /*n_right=*/2);
     // Equal bits leave the comparison state unchanged.
     middle(0, 0, 0) = Scalar(1);
     middle(1, 0, 1) = Scalar(1);
@@ -77,7 +77,7 @@ Tensor3D<Scalar> make_heaviside_mpo_core(
     // If !c_right, their is nothing on right but something on left
     // Most-significant-bit boundary: initialize the comparison in the
     // undecided state by selecting column zero from each interior slice.
-    Tensor3D<Scalar> core(/*n_left=*/2, /*n_phys=*/4, /*n_right=*/1);
+    xfac_quad::Tensor3D<Scalar> core(/*n_left=*/2, /*n_phys=*/4, /*n_right=*/1);
     for (Eigen::Index state = 0; state < 2; ++state)
         for (Eigen::Index physical = 0; physical < 4; ++physical)
             core(state, physical, 0) = middle(state, physical, 0);
@@ -96,7 +96,7 @@ MPO<Scalar> make_heaviside_mpo(int nbits, Scalar diagonal_value = Scalar(0))
     if (nbits <= 0)
         throw std::invalid_argument("make_heaviside_mpo: nbits must be positive");
 
-    std::vector<Tensor3D<Scalar>> cores;
+    std::vector<xfac_quad::Tensor3D<Scalar>> cores;
     cores.reserve(static_cast<std::size_t>(nbits));
 
     for (int site = 0; site < nbits; ++site) {

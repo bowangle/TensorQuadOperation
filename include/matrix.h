@@ -1,4 +1,4 @@
 #pragma once
 
-#include "tensor.h"
+#include <xfac_quad/cubemat_helper.h>
 #include <Eigen/Dense>

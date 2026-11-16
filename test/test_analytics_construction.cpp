@@ -21,21 +21,21 @@ void require_mps_structure(const MPS<Scalar>& mps, int nbit, int max_bond_dim)
     const auto& cores = mps.get_core();
     REQUIRE(cores.size() == static_cast<std::size_t>(nbit));
     REQUIRE_FALSE(cores.empty());
-    REQUIRE(cores.front().n_left == 1);
-    REQUIRE(cores.back().n_right == 1);
+    REQUIRE(cores.front().n_rows == 1);
+    REQUIRE(cores.back().n_slices == 1);
 
     for (std::size_t bit = 0; bit < cores.size(); ++bit) {
         CAPTURE(bit);
         const auto& core = cores[bit];
-        REQUIRE(core.n_phys == 2);
-        REQUIRE(core.n_left > 0);
-        REQUIRE(core.n_right > 0);
-        REQUIRE(core.n_left <= max_bond_dim);
-        REQUIRE(core.n_right <= max_bond_dim);
+        REQUIRE(core.n_cols == 2);
+        REQUIRE(core.n_rows > 0);
+        REQUIRE(core.n_slices > 0);
+        REQUIRE(core.n_rows <= max_bond_dim);
+        REQUIRE(core.n_slices <= max_bond_dim);
         REQUIRE(core.data.size() == static_cast<std::size_t>(
-            core.n_left * core.n_phys * core.n_right));
+            core.n_rows * core.n_cols * core.n_slices));
         if (bit > 0) {
-            REQUIRE(cores[bit - 1].n_right == core.n_left);
+            REQUIRE(cores[bit - 1].n_slices == core.n_rows);
         }
     }
 }

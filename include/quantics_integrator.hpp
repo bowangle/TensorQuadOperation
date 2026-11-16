@@ -414,7 +414,7 @@ private:
     {
         MatrixX environment = MatrixX::Identity(1, 1);
         for (const auto& core : values.get_core()) {
-            MatrixX transfer = core.phys_const(0) + core.phys_const(1);
+            MatrixX transfer = core.col_as_mat_const(0) + core.col_as_mat_const(1);
             environment = (environment * transfer).eval();
         }
         return environment(0, 0);
@@ -427,7 +427,7 @@ private:
         std::vector<MatrixX> free_left(cores.size() + 1);
         free_left[0] = MatrixX::Identity(1, 1);
         for (std::size_t site = 0; site < cores.size(); ++site) {
-            const MatrixX transfer = cores[site].phys_const(0) + cores[site].phys_const(1);
+            const MatrixX transfer = cores[site].col_as_mat_const(0) + cores[site].col_as_mat_const(1);
             free_left[site + 1] = (free_left[site] * transfer).eval();
         }
         return free_left;
@@ -452,11 +452,11 @@ private:
                 ((boundary >> site) & Sint(1)) != Sint(0);
             if (bit) {
                 result += (free_left[static_cast<std::size_t>(site)]
-                           * cores[static_cast<std::size_t>(site)].phys_const(0)
+                           * cores[static_cast<std::size_t>(site)].col_as_mat_const(0)
                            * fixed_right)(0, 0);
             }
             fixed_right =
-                (cores[static_cast<std::size_t>(site)].phys_const(bit ? 1 : 0)
+                (cores[static_cast<std::size_t>(site)].col_as_mat_const(bit ? 1 : 0)
                  * fixed_right).eval();
         }
         return result;
@@ -481,11 +481,11 @@ private:
                 ((boundary >> site) & Sint(1)) != Sint(0);
             if (!bit) {
                 result += (free_left[static_cast<std::size_t>(site)]
-                           * cores[static_cast<std::size_t>(site)].phys_const(1)
+                           * cores[static_cast<std::size_t>(site)].col_as_mat_const(1)
                            * fixed_right)(0, 0);
             }
             fixed_right =
-                (cores[static_cast<std::size_t>(site)].phys_const(bit ? 1 : 0)
+                (cores[static_cast<std::size_t>(site)].col_as_mat_const(bit ? 1 : 0)
                  * fixed_right).eval();
         }
         // The branch contributions are strictly greater than the boundary;
@@ -511,9 +511,9 @@ private:
              --site) {
             const auto& core = cores[static_cast<std::size_t>(site)];
             const MatrixX next_zero =
-                (core.phys_const(0) * fixed_right).eval();
+                (core.col_as_mat_const(0) * fixed_right).eval();
             const MatrixX next_one =
-                (core.phys_const(1) * fixed_right).eval();
+                (core.col_as_mat_const(1) * fixed_right).eval();
             const MatrixX contributions =
                 (free_left[static_cast<std::size_t>(site)] * next_zero).eval();
 
@@ -553,9 +553,9 @@ private:
              --site) {
             const auto& core = cores[static_cast<std::size_t>(site)];
             const MatrixX next_zero =
-                (core.phys_const(0) * fixed_right).eval();
+                (core.col_as_mat_const(0) * fixed_right).eval();
             const MatrixX next_one =
-                (core.phys_const(1) * fixed_right).eval();
+                (core.col_as_mat_const(1) * fixed_right).eval();
             const MatrixX contributions =
                 (free_left[static_cast<std::size_t>(site)] * next_one).eval();
 
@@ -588,13 +588,13 @@ private:
     static State make_heaviside_mps(Sint step, int nbits, bool ascending)
     {
         constexpr Eigen::Index chi = 3;
-        std::vector<Tensor3D<Scalar>> cores;
+        std::vector<xfac_quad::Tensor3D<Scalar>> cores;
         cores.reserve(static_cast<std::size_t>(nbits));
 
         for (int site = 0; site < nbits; ++site) {
             const int step_bit =
                 static_cast<int>((step >> site) & Sint(1));
-            Tensor3D<Scalar> core(chi, 2, chi);
+            xfac_quad::Tensor3D<Scalar> core(chi, 2, chi);
 
             for (int value_bit = 0; value_bit < 2; ++value_bit) {
                 core(1, value_bit, 1) = Scalar(1); // GT -> GT
@@ -613,7 +613,7 @@ private:
         // The right boundary starts in EQ.
         {
             const auto& source = cores.back();
-            Tensor3D<Scalar> last(chi, 2, 1);
+            xfac_quad::Tensor3D<Scalar> last(chi, 2, 1);
             for (Eigen::Index left = 0; left < chi; ++left)
                 for (Eigen::Index bit = 0; bit < 2; ++bit)
                     last(left, bit, 0) = source(left, bit, 0);
@@ -623,9 +623,9 @@ private:
         // Ascending accepts EQ and GT; descending accepts LT only.
         {
             const auto& source = cores.front();
-            Tensor3D<Scalar> first(1, 2, source.n_right);
+            xfac_quad::Tensor3D<Scalar> first(1, 2, source.n_slices);
             for (Eigen::Index bit = 0; bit < 2; ++bit) {
-                for (Eigen::Index right = 0; right < source.n_right; ++right) {
+                for (Eigen::Index right = 0; right < source.n_slices; ++right) {
                     if (ascending)
                         first(0, bit, right) = source(0, bit, right)
                                              + source(1, bit, right);
@@ -674,16 +674,16 @@ private:
         if (static_cast<int>(cores.size()) != grid_.get_nBits())
             throw std::invalid_argument(
                 "QuanticsIntegrator1D: MPS length differs from grid nBits");
-        if (cores.front().n_left != 1 || cores.back().n_right != 1)
+        if (cores.front().n_rows != 1 || cores.back().n_slices != 1)
             throw std::invalid_argument(
                 "QuanticsIntegrator1D: MPS boundary bond dimensions must be one");
 
         for (std::size_t site = 0; site < cores.size(); ++site) {
-            if (cores[site].n_phys != 2)
+            if (cores[site].n_cols != 2)
                 throw std::invalid_argument(
                     "QuanticsIntegrator1D: every physical dimension must be two");
             if (site + 1 < cores.size()
-                && cores[site].n_right != cores[site + 1].n_left)
+                && cores[site].n_slices != cores[site + 1].n_rows)
                 throw std::invalid_argument(
                     "QuanticsIntegrator1D: adjacent MPS bond dimensions differ");
         }

@@ -15,12 +15,12 @@
 template<typename T>
 class MPO : public TT<T> {
     using Base       = TT<T>;
-    using VecTT      = std::vector<Tensor3D<T>>;
+    using VecTT      = std::vector<xfac_quad::Tensor3D<T>>;
     using RealScalar = typename Eigen::NumTraits<T>::Real;
 
     void _check_mpo_phys() const {
         for (auto const& x : this->core)
-            if (x.n_phys != 4)
+            if (x.n_cols != 4)
                 throw std::invalid_argument(
                     "MPO: expected physical dimension 4 on every core");
     }
@@ -62,12 +62,12 @@ public:
         core.reserve(src.size());
 
         for (auto const& x : src) {
-            if (x.n_phys != 2)
+            if (x.n_cols != 2)
                 throw std::invalid_argument("MPO::from_mps: expected MPS physical dimension 2");
 
-            Tensor3D<T> t(x.n_left, 4, x.n_right);   // zero-initialized
-            t.phys(0) = x.phys_const(0);
-            t.phys(3) = x.phys_const(1);
+            xfac_quad::Tensor3D<T> t(x.n_rows, 4, x.n_slices);   // zero-initialized
+            t.col_as_mat(0) = x.col_as_mat_const(0);
+            t.col_as_mat(3) = x.col_as_mat_const(1);
             core.push_back(std::move(t));
         }
 
@@ -94,11 +94,11 @@ public:
         c.reserve(this->core.size());
 
         for (auto const& x : this->core) {
-            Tensor3D<T> t(x.n_left, 4, x.n_right);
-            t.phys(0) = x.phys_const(0);
-            t.phys(1) = x.phys_const(2);   // new (0,1)  <-  old (1,0)
-            t.phys(2) = x.phys_const(1);   // new (1,0)  <-  old (0,1)
-            t.phys(3) = x.phys_const(3);
+            xfac_quad::Tensor3D<T> t(x.n_rows, 4, x.n_slices);
+            t.col_as_mat(0) = x.col_as_mat_const(0);
+            t.col_as_mat(1) = x.col_as_mat_const(2);   // new (0,1)  <-  old (1,0)
+            t.col_as_mat(2) = x.col_as_mat_const(1);   // new (1,0)  <-  old (0,1)
+            t.col_as_mat(3) = x.col_as_mat_const(3);
             c.push_back(std::move(t));
         }
 
@@ -122,9 +122,9 @@ public:
         c.reserve(this->core.size());
 
         for (auto const& x : this->core) {
-            Tensor3D<T> t(x.n_left, 2, x.n_right);
-            t.phys(0) = x.phys_const(0);   // (0,0) diagonal entry
-            t.phys(1) = x.phys_const(3);   // (1,1) diagonal entry
+            xfac_quad::Tensor3D<T> t(x.n_rows, 2, x.n_slices);
+            t.col_as_mat(0) = x.col_as_mat_const(0);   // (0,0) diagonal entry
+            t.col_as_mat(1) = x.col_as_mat_const(3);   // (1,1) diagonal entry
             c.push_back(std::move(t));
         }
 

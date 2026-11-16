@@ -21,7 +21,7 @@ template<typename T> MPS<T> make_basis_mps(const std::vector<int>& bits);
 template<typename T>
 class MPS : public TT<T> {
     using Base       = TT<T>;
-    using VecTT      = std::vector<Tensor3D<T>>;
+    using VecTT      = std::vector<xfac_quad::Tensor3D<T>>;
     using MatrixX    = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     using RealScalar = typename Eigen::NumTraits<T>::Real;
 
@@ -43,7 +43,7 @@ public:
     // chi_a x chi_b "environment" matrix E across the train:
     //
     //   E_0(ra, rb)  = sum_{l,p} conj(A_0(l,p,ra)) B_0(l,p,rb)
-    //   E_k          = sum_p  A_k.phys(p)^H * E_{k-1} * B_k.phys(p)
+    //   E_k          = sum_p  A_k.col_as_mat(p)^H * E_{k-1} * B_k.col_as_mat(p)
     //
     // which is the same contraction in a different order, at
     // O(chi^3) per site.
@@ -58,24 +58,24 @@ private:
 
         if (a.size() != b.size())
             throw std::invalid_argument("MPS::contract_env: trying to contract MPSs of different lengths");
-        if (a[0].n_left != 1 || b[0].n_left != 1)
+        if (a[0].n_rows != 1 || b[0].n_rows != 1)
             throw std::invalid_argument("MPS::contract_env: non-trivial left boundary legs");
 
         // First site: E = A^H * B over the merged (left*phys) index.
-        if (a[0].n_phys != b[0].n_phys)
+        if (a[0].n_cols != b[0].n_cols)
             throw std::invalid_argument("MPS::contract_env: physical dimensions differ at site 0");
         MatrixX E = a[0].flatten_as_matrix2_const().adjoint()
                   * b[0].flatten_as_matrix2_const();          // (ra_0 x rb_0)
 
-        // Sweep: E <- sum_p A_k.phys(p)^H * E * B_k.phys(p)
+        // Sweep: E <- sum_p A_k.col_as_mat(p)^H * E * B_k.col_as_mat(p)
         for (std::size_t k = 1; k < a.size(); k++) {
-            if (a[k].n_phys != b[k].n_phys)
+            if (a[k].n_cols != b[k].n_cols)
                 throw std::invalid_argument("MPS::contract_env: physical dimensions differ");
 
-            MatrixX Enew = MatrixX::Zero(a[k].n_right, b[k].n_right);
-            for (Eigen::Index p = 0; p < a[k].n_phys; p++)
-                Enew.noalias() += a[k].phys_const(p).adjoint()
-                                * (E * b[k].phys_const(p));
+            MatrixX Enew = MatrixX::Zero(a[k].n_slices, b[k].n_slices);
+            for (Eigen::Index p = 0; p < a[k].n_cols; p++)
+                Enew.noalias() += a[k].col_as_mat_const(p).adjoint()
+                                * (E * b[k].col_as_mat_const(p));
             E = std::move(Enew);
         }
         return E;
@@ -116,7 +116,7 @@ public:
                 "MPS::conv: expected nonempty MPSs of the same length");
         }
         for (const auto& tensor : this->core) {
-            if (tensor.n_phys != 2) {
+            if (tensor.n_cols != 2) {
                 throw std::invalid_argument(
                     "MPS::conv: expected signal physical dimension 2");
             }
@@ -158,7 +158,7 @@ public:
             throw std::invalid_argument("MPS::neg_translation: MPS must not be empty");
         }
         for (const auto& tensor : this->core) {
-            if (tensor.n_phys != 2) {
+            if (tensor.n_cols != 2) {
                 throw std::invalid_argument(
                     "MPS::neg_translation: expected physical dimension 2");
             }

@@ -54,7 +54,7 @@ All 7 test executables run in parallel; their output is saved to `test/test_*.tx
 
 | Header | Purpose |
 |---|---|
-| `tensor.h` | `Tensor3D<T>` — the 3‑index building block (left × phys × right) with stride‑aware slice views |
+| `xfac_quad/cubemat_helper.h` (dependency) | Shared `xfac_quad::Tensor3D<T>` — column-major 3-index tensors with views, copies, and serialization |
 | `tt_base.h` | `TT<T>` — generic Tensor Train: canonicalisation, addition, scalar ops, conjugation, evaluation, save/load |
 | `mps_base.h` | `MPS<T>` — Matrix Product State (phys = 2): `dot`, `norm2`, promotion from `TT` |
 | `mpo_base.h` | `MPO<T>` — Matrix Product Operator (phys = 4): `from_mps`, `diag`, `transpose`, `_mul` (apply to MPS/MPO) |
@@ -71,8 +71,8 @@ All 7 test executables run in parallel; their output is saved to `test/test_*.tx
 ```cpp
 #include "mps_base.h"
 
-// Build from a vector of Tensor3D<T> cores
-std::vector<Tensor3D<std::complex<double>>> cores = { /* ... */ };
+// Build from a vector of shared Tensor3D cores
+std::vector<xfac_quad::Tensor3D<std::complex<double>>> cores = { /* ... */ };
 MPS<std::complex<double>> psi(cores);
 
 // Load from a TCI‑generated file (Armadillo cube text format)
@@ -207,7 +207,6 @@ bash run_test.sh
 ```
 TensorQuadOperation/
 ├── include/              # Public headers
-│   ├── tensor.h          # Tensor3D<T>
 │   ├── matrix.h          # Eigen include wrapper
 │   ├── tt_base.h         # TT<T> base class
 │   ├── mps_base.h        # MPS<T>

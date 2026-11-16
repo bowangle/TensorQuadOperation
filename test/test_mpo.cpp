@@ -181,21 +181,21 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
         print_shape(mpo_f2, "mpo_f2");
 
         // 2b. Diagonal structure — check element-wise:
-        //     MPO.phys(0) == MPS.phys(0),  MPO.phys(3) == MPS.phys(1),
-        //     MPO.phys(1) == 0,            MPO.phys(2) == 0
+        //     MPO.col_as_mat(0) == MPS.col_as_mat(0),  MPO.col_as_mat(3) == MPS.col_as_mat(1),
+        //     MPO.col_as_mat(1) == 0,            MPO.col_as_mat(2) == 0
         auto const& mps1_cores = mps_f1.get_core();
         auto const& mpo1_cores = mpo_f1.get_core();
         Real max_err = Real(0);
         for (size_t k = 0; k < mps1_cores.size(); k++) {
             // phys(0) should match MPS phys(0)
             max_err = std::max(max_err,
-                (mpo1_cores[k].phys_const(0) - mps1_cores[k].phys_const(0)).norm());
+                (mpo1_cores[k].col_as_mat_const(0) - mps1_cores[k].col_as_mat_const(0)).norm());
             // phys(3) should match MPS phys(1)
             max_err = std::max(max_err,
-                (mpo1_cores[k].phys_const(3) - mps1_cores[k].phys_const(1)).norm());
+                (mpo1_cores[k].col_as_mat_const(3) - mps1_cores[k].col_as_mat_const(1)).norm());
             // phys(1) and phys(2) should be zero
-            max_err = std::max(max_err, mpo1_cores[k].phys_const(1).norm());
-            max_err = std::max(max_err, mpo1_cores[k].phys_const(2).norm());
+            max_err = std::max(max_err, mpo1_cores[k].col_as_mat_const(1).norm());
+            max_err = std::max(max_err, mpo1_cores[k].col_as_mat_const(2).norm());
         }
         std::cout << "  mpo_f1 diagonal structure: max element-wise diff = "
                   << to_double<Real>(max_err) << "\n";

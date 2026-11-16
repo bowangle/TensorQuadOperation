@@ -40,13 +40,13 @@ TT<Scalar> make_magic_tensor(int nbit)
         throw std::invalid_argument("maek_magic_tensor: nbit must be positive");
     }
 
-    std::vector<Tensor3D<Scalar>> cores;
+    std::vector<xfac_quad::Tensor3D<Scalar>> cores;
     cores.reserve(static_cast<std::size_t>(nbit));
 
     for (int site = 0; site < nbit; ++site) {
         const int left_dim = site == 0 ? 1 : 2;
         const int right_dim = site == nbit - 1 ? 1 : 2;
-        Tensor3D<Scalar> core(left_dim, 8, right_dim); // zero-initialized
+        xfac_quad::Tensor3D<Scalar> core(left_dim, 8, right_dim); // zero-initialized
 
         for (int carry_in = 0; carry_in < left_dim; ++carry_in) {
             for (int n_prime = 0; n_prime < 2; ++n_prime) {
@@ -91,7 +91,7 @@ MPS<Scalar> magic_tensor_product(const MPS<Scalar>& mps)
     }
     const int nbit = static_cast<int>(input_cores.size());
     for (const auto& core : input_cores) {
-        if (core.n_phys != 2) {
+        if (core.n_cols != 2) {
             throw std::invalid_argument("magic_tensor_product: expected MPS physical dimension 2");
         }
     }
