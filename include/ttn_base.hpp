@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mpo_base.h"
 #include <xfac_quad/cubemat_helper.h>
 #include <xfac_quad/tree/tensor_tree.hpp>
 
@@ -8,9 +9,11 @@
 #include <cstddef>
 #include <map>
 #include <ostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 template<typename T>
@@ -199,6 +202,193 @@ public:
     // =============================================================
     //                      TTN operator:
     // =============================================================
+
+    void mul_branch(
+        int branch_id,
+        MPO<T> mpo,
+        bool compress=false,
+        std::string const& method = "optimize",
+        int order = 2,
+        int n_sweeps = 2)
+    {
+        _branch_axes(branch_id);
+        const auto& branch = ttn_body.tree.branches->at(branch_id);
+        const auto& operator_cores = std::as_const(mpo).get_core();
+        if (operator_cores.size() != branch.nodes.size())
+            throw std::invalid_argument("TTN::mul_branch: MPO length mismatch");
+        if (operator_cores.front().n_rows != 1 || operator_cores.back().n_slices != 1)
+            throw std::invalid_argument("TTN::mul_branch: MPO boundaries must have dimension one");
+        for (int node : branch.nodes)
+            if (ttn_body.M.at(node).n_slices != 2)
+                throw std::invalid_argument("TTN::mul_branch: expected physical dimension two");
+        if (method != "zip-up" && method != "qrsvd" && method != "optimize")
+            throw std::invalid_argument("TTN::mul_branch: unknown multiplication method");
+        const int original_w = w;
+        // 1: move canonical center of the tree in the branch root
+        // extract_branch performs this move without truncation.
+        // 2: extract the branch mps from it and set it's canonical center 
+        //    (have an additional dangling leg on the side)
+        auto branch_mps = extract_branch(branch_id);
+        // 3 : multiply the mpo with the branch mps 
+        auto result = mpo._mul(branch_mps, method, order, n_sweeps);
+        // 4: put the result back in the tree and move the canonical center back to the original position
+        insert_branch(branch_id, std::move(result));
+        // compress controls the return move; MPO multiplication uses the operands' truncation settings.
+        if (original_w != -1)
+            move_canonical_center(original_w, compress);
+    }
+
+    MPS<T> extract_branch(int branch_id)
+    {
+        const auto axes = _branch_axes(branch_id);
+        const auto& branch = ttn_body.tree.branches->at(branch_id);
+        // 1: move canonical center of the tree in the branch root (updates TTN::w)
+        move_canonical_center(branch.nodes.back());
+        // 2: extract the branch mps from it and set it's canonical center 
+        //    (have an additional dangling leg on the side)
+        VecTT cores;
+        cores.reserve(branch.nodes.size());
+        for (std::size_t i = 0; i < branch.nodes.size(); ++i) {
+            const auto& source = ttn_body.M.at(branch.nodes[i]);
+            const std::array<Eigen::Index, 2> shape{source.n_rows, source.n_cols};
+            xfac_quad::Tensor3D<T> core(shape[axes[i][0]], source.n_slices,
+                                       shape[axes[i][1]]);
+            for (Eigen::Index right = 0; right < core.n_slices; ++right)
+                for (Eigen::Index physical = 0; physical < core.n_cols; ++physical)
+                    for (Eigen::Index left = 0; left < core.n_rows; ++left) {
+                        std::array<Eigen::Index, 2> index;
+                        index[axes[i][0]] = left;
+                        index[axes[i][1]] = right;
+                        core(left, physical, right) = source(index[0], index[1], physical);
+                    }
+            cores.push_back(std::move(core));
+        }
+        // 3 : return the branch mps
+        return MPS<T>(std::move(cores), max_bond_dim, reltol,
+                      static_cast<int>(branch.nodes.size()) - 1);
+    }
+
+    void insert_branch(int branch_id, MPS<T> branch_mps, int new_w=-1)
+    {
+        // Prepare the replacement before moving the TTN center.
+        // Validate the branch topology and recover each node's stored bond axes.
+        const auto axes = _branch_axes(branch_id);
+        const auto& branch = ttn_body.tree.branches->at(branch_id);
+        const auto& cores = std::as_const(branch_mps).get_core();
+        // Check the requested center and compatibility with the existing branch.
+        // The leaf boundary is trivial; the right boundary connects to the tree.
+        if (new_w != -1 && !ttn_body.tree.neigh.contains(new_w))
+            throw std::invalid_argument("TTN::insert_branch: invalid target center");
+        if (cores.size() != branch.nodes.size())
+            throw std::invalid_argument("TTN::insert_branch: branch length mismatch");
+        const auto& endpoint = ttn_body.M.at(branch.nodes.back());
+        const std::array<Eigen::Index, 2> endpoint_shape{endpoint.n_rows, endpoint.n_cols};
+        if (cores.front().n_rows != 1 ||
+            cores.back().n_slices != endpoint_shape[axes.back()[1]])
+            throw std::invalid_argument("TTN::insert_branch: boundary dimension mismatch");
+        for (std::size_t i = 0; i < cores.size(); ++i) {
+            if (cores[i].n_cols != ttn_body.M.at(branch.nodes[i]).n_slices ||
+                cores[i].n_rows <= 0 || cores[i].n_slices <= 0)
+                throw std::invalid_argument("TTN::insert_branch: invalid core dimensions");
+            if (i > 0 && cores[i - 1].n_slices != cores[i].n_rows)
+                throw std::invalid_argument("TTN::insert_branch: internal bond mismatch");
+        }
+        // Canonicalize the incoming MPS at its last site, the attachment endpoint.
+        // branch_mps is a local copy; cores references its updated tensors.
+        branch_mps.shift_w(static_cast<int>(cores.size()) - 1);
+        // Prepare step 2 by converting (left, physical, right) MPS axes back
+        // to the stored tree axes, with the physical index on axis two.
+        // Finish allocation and conversion before changing the TTN.
+        VecTT replacements;
+        replacements.reserve(cores.size());
+        for (std::size_t i = 0; i < cores.size(); ++i) {
+            const auto& core = cores[i];
+            std::array<Eigen::Index, 2> shape;
+            shape[axes[i][0]] = core.n_rows;
+            shape[axes[i][1]] = core.n_slices;
+            xfac_quad::Tensor3D<T> tensor(shape[0], shape[1], core.n_cols);
+            for (Eigen::Index right = 0; right < core.n_slices; ++right)
+                for (Eigen::Index physical = 0; physical < core.n_cols; ++physical)
+                    for (Eigen::Index left = 0; left < core.n_rows; ++left) {
+                        std::array<Eigen::Index, 2> index;
+                        index[axes[i][0]] = left;
+                        index[axes[i][1]] = right;
+                        tensor(index[0], index[1], physical) = core(left, physical, right);
+                    }
+            replacements.push_back(std::move(tensor));
+        }
+        // 1: move the TTN canonical center to the branch attachment node before replacing the branch
+        // The branch-side endpoint is nodes.back(); attachment itself is outside the branch.
+        move_canonical_center(branch.nodes.back());
+        // A QR center move can change bond dimensions, so recheck the attachment.
+        const auto& centered_endpoint = ttn_body.M.at(branch.nodes.back());
+        const std::array<Eigen::Index, 2> centered_shape{
+            centered_endpoint.n_rows, centered_endpoint.n_cols};
+        if (cores.back().n_slices != centered_shape[axes.back()[1]])
+            throw std::invalid_argument("TTN::insert_branch: attachment dimension changed during center movement");
+        // 2: insert the branch mps into the tree and set its canonical center
+        //    (have an additional dangling leg on the side)
+        for (std::size_t i = 0; i < replacements.size(); ++i)
+            ttn_body.M.at(branch.nodes[i]) = std::move(replacements[i]);
+        w = branch.nodes.back();
+        // 3: move the canonical center back to new_w (if new_w==-1, keep it at the branch attachment node)
+        if (new_w != -1)
+            move_canonical_center(new_w);
+    }
+
+private:
+    // Validate the chain and map its left/right bonds to stored tensor axes.
+    std::vector<std::array<int, 2>> _branch_axes(int branch_id) const
+    {
+        const auto& tree = ttn_body.tree;
+        if (!tree.branches || branch_id < 0 ||
+            static_cast<std::size_t>(branch_id) >= tree.branches->size())
+            throw std::invalid_argument("TTN: invalid branch id or missing branch metadata");
+        const auto& branch = tree.branches->at(branch_id);
+        if (branch.nodes.empty())
+            throw std::invalid_argument("TTN: empty branch");
+        std::set<int> visited;
+        std::vector<std::array<int, 2>> axes;
+        for (std::size_t i = 0; i < branch.nodes.size(); ++i) {
+            const int node = branch.nodes[i];
+            if (!tree.nodes.contains(node) || !visited.insert(node).second)
+                throw std::invalid_argument("TTN: branch must contain distinct physical nodes");
+            const int previous = i == 0 ? -1 : branch.nodes[i - 1];
+            const int next = i + 1 == branch.nodes.size() ? branch.attachment : branch.nodes[i + 1];
+            const auto& neighbors = tree.neigh.at(node);
+            for (int neighbor : neighbors.from_int())
+                if (neighbor != -1 && neighbor != previous && neighbor != next)
+                    throw std::invalid_argument("TTN: branch has an unexpected external connection");
+            int left = previous == -1 ? -1 : neighbors.pos(previous);
+            int right = next == -1 ? -1 : neighbors.pos(next);
+            if ((previous != -1 && (left < 0 || left > 1)) ||
+                (next != -1 && (right < 0 || right > 1)))
+                throw std::invalid_argument("TTN: branch bond must occupy axis zero or one");
+            if (left == -1) left = right == -1 ? 0 : 1 - right;
+            if (right == -1) right = 1 - left;
+            if (left == right)
+                throw std::invalid_argument("TTN: invalid branch ordering");
+            const auto& tensor = ttn_body.M.at(node);
+            const std::array<Eigen::Index, 2> shape{tensor.n_rows, tensor.n_cols};
+            if (tensor.n_slices <= 0 || shape[0] <= 0 || shape[1] <= 0 ||
+                (previous == -1 && shape[left] != 1) || (next == -1 && shape[right] != 1))
+                throw std::invalid_argument("TTN: invalid branch tensor dimensions");
+            if (next != -1) {
+                const int reciprocal = tree.neigh.at(next).pos(node);
+                const auto& neighbor = ttn_body.M.at(next);
+                const std::array<Eigen::Index, 3> neighbor_shape{
+                    neighbor.n_rows, neighbor.n_cols, neighbor.n_slices};
+                if (reciprocal < 0 || reciprocal > 2 || shape[right] != neighbor_shape[reciprocal])
+                    throw std::invalid_argument("TTN: branch bond dimension mismatch");
+            }
+            axes.push_back({left, right});
+        }
+        if (visited.contains(branch.attachment))
+            throw std::invalid_argument("TTN: attachment must be outside the branch");
+        return axes;
+    }
+
+public:
 
     // =============================================================
     //                      TTN misc:
