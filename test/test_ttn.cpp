@@ -289,6 +289,41 @@ void test_ttn(const std::string& type_name, int function_id, const std::string& 
         std::cout << "chi=" << loaded.get_chi() << "\n";
     });
 
+    timed("scalar multiplication preserves centre and off-centre tensors", [&] {
+        for (int center : {-1, 0, junction}) {
+            const TTN<T> baseline(original, 7, Real(1)/Real(1000), center);
+            const auto snapshot = baseline.get_TTN_body();
+            const auto values = baseline.eval_list(points);
+            for (T scalar : {T(-2), T(Real(1)/Real(2), Real(1)/Real(4)), T(0)}) {
+                auto expected = values;
+                for (auto& value : expected) value *= scalar;
+                const auto right = baseline * scalar;
+                const auto left = scalar * baseline;
+                auto in_place = baseline;
+                check(&(in_place *= scalar) == &in_place, "operator*= returns the same TTN");
+                for (const auto* result : std::array<const TTN<T>*, 3>{&right, &left, &in_place}) {
+                    check(result->get_w() == center, "scalar multiplication preserves centre");
+                    check(result->get_shape() == baseline.get_shape(), "scalar multiplication preserves shapes");
+                    check(result->get_max_bond_dim() == baseline.get_max_bond_dim() &&
+                          result->get_reltol() == baseline.get_reltol(),
+                          "scalar multiplication preserves truncation settings");
+                    const int scaled_node = center == -1 ? snapshot.tree.root : center;
+                    for (const auto& [node, neighbors] : snapshot.tree.neigh)
+                        if (node != scaled_node)
+                            check(result->get_TTN_body().M.at(node).data == snapshot.M.at(node).data,
+                                  "scalar multiplication only changes the centre or root");
+                    check_values("scalar multiplication", result->eval_list(points), expected, numeric_tolerance<T>());
+                    if (center != -1) check_canonical(*result);
+                }
+            }
+            auto doubled = values;
+            for (auto& value : doubled) value *= Real(2);
+            check_values("real scalar on left", (Real(2) * baseline).eval_list(points), doubled, numeric_tolerance<T>());
+            check_values("real scalar on right", (baseline * Real(2)).eval_list(points), doubled, numeric_tolerance<T>());
+            check_same_body(snapshot, baseline.get_TTN_body());
+        }
+    });
+
     timed("initialise and canonify at every physical and artificial node", [&] {
         for (const auto& [node, neighbors] : original.tree.neigh) {
             (void)neighbors;

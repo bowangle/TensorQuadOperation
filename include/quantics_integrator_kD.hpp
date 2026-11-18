@@ -1,11 +1,13 @@
 #pragma once
 #include "ttn_base.hpp"
 #include "quantics_integrator.hpp"
+#include "generic_construction.hpp"
 #include <type_int128.h>
 #include <xfac_quad_runner/xf-qd-runner.hpp>
 #include <xfac_quad_runner/xf-quad-param.hpp>
 #include <Eigen/Dense>
 #include <spdlog/logger.h>
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <functional>
@@ -112,7 +114,7 @@ public:
     }
 
     // ======================================================================
-    // methods
+    // Definite Integration:
     // ======================================================================
 
     /// Integrate over the full grid by summing all physical legs and scaling
@@ -153,10 +155,201 @@ public:
         return contracted.sum() * Scalar(grid_.delta_volume());
     }
 
+    // ======================================================================
+    // Indefinite Integration:
+    // ======================================================================
+
+    /// No Kernel indication this is the class indefinite integration
+    /// Construct the ordinary exclusive-prefix integral over all variables.
+    /// In 3D: F[p,q,r] = dV * sum(i=0..p-1) sum(j=0..q-1) sum(k=0..r-1) f[i,j,k].
+    /// Build one Heaviside kernel per branch, zero at the origin and one afterward.
+    /// Delegate volume scaling and saving to make_indefinite_integrator_conv.
+    /// Neither input is modified; the returned TTN uses the original value grid.
+    static mState make_indefinite_integrator_from_conv(
+        const mState& values,
+        const mGrid& grid,
+        const std::string& save_prefix,
+        int max_bond_dim = 0,
+        RealScalar reltol = RealScalar(-1),
+        bool final_compress = true)
+    {
+        validate_grid(grid);
+        const auto dimensions = static_cast<std::size_t>(grid.get_dim());
+        std::vector<MPS<Scalar>> kernels;
+        std::vector<RealScalar> kernel_a, kernel_b;
+        kernels.reserve(dimensions);
+        kernel_a.reserve(dimensions);
+        kernel_b.reserve(dimensions);
+        for (std::size_t i = 0; i < dimensions; ++i) {
+            const RealScalar length = grid.get_b()[i] - grid.get_a()[i];
+            auto [kernel, lag_grid] =
+                analytic_mps_construction::make_exclusive_heaviside_mps<Scalar, Sint>(
+                    length, grid.get_nBits()[i]);
+            kernels.push_back(std::move(kernel));
+            kernel_a.push_back(lag_grid.get_a());
+            kernel_b.push_back(lag_grid.get_b());
+        }
+        const mGrid kernel_grid(std::move(kernel_a), std::move(kernel_b), grid.get_nBits());
+        return make_indefinite_integrator_conv(
+            values, grid, kernels, kernel_grid, save_prefix,
+            max_bond_dim, reltol, final_compress);
+    }
+
+    /// Kernel need to be provided. It's the raw convolution operation
+    /// Convolve values with one independent 1D MPS kernel per variable.
+    /// kernels[i] acts on branch i and uses dimension i of kernel_grid.
+    /// The private helper applies the grid-cell volume exactly once.
+    /// Save to <save_prefix>_conv_indefinite_int.tt and return the response TTN.
+    /// Neither input is modified; kernel-dependent responses are not general
+    /// primitives whose differences give arbitrary weighted subinterval integrals.
+    static mState make_indefinite_integrator_conv(
+        const mState& values,
+        const mGrid& grid,
+        const std::vector<MPS<Scalar>>& kernels,
+        const mGrid& kernel_grid,
+        const std::string& save_prefix,
+        int max_bond_dim = 0,
+        RealScalar reltol = RealScalar(-1),
+        bool final_compress = true)
+    {
+        if (save_prefix.empty())
+            throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integrator_conv: save_prefix must not be empty");
+
+        auto response = make_indefinite_integral_conv(
+            values, grid, kernels, kernel_grid, max_bond_dim, reltol, final_compress);
+        response.first.save(save_prefix + "_conv_indefinite_int.tt");
+        return std::move(response.first);
+    }
+
+    /// Evaluate a hypercube using the same x_min and x_max in every variable.
+    /// Broadcast the bounds and delegate to eval_rect_indefinite_integrator.
+    /// In 3D, writing a=x_min, b=x_max, the corner sum is:
+    ///   F(b,b,b) - F(a,b,b) - F(b,a,b) - F(b,b,a)
+    ///   + F(a,a,b) + F(a,b,a) + F(b,a,a) - F(a,a,a).
+    static Scalar eval_cube_indefinite_integrator(
+        const mState& indefinite_values,
+        const mGrid& grid,
+        const RealScalar& x_min,
+        const RealScalar& x_max)
+    {
+        validate_grid(grid);
+        const auto dimensions = static_cast<std::size_t>(grid.get_dim());
+        return eval_rect_indefinite_integrator(
+            indefinite_values, grid, std::vector<RealScalar>(dimensions, x_min),
+            std::vector<RealScalar>(dimensions, x_max));
+    }
+
+    /// Evaluate one rectangle, with one lower/upper bound per variable, using
+    /// inclusion-exclusion over its 2^d corners. A corner's sign is
+    /// (-1)^(number of lower bounds). These vectors are not a batch of queries.
+    /// For the exclusive-Heaviside primitive, this integrates the rectangle.
+    /// For other kernels, it is only a mixed difference of the convolution response.
+    /// Bounds are mapped through the grid; the upper domain endpoint is not stored
+    /// in the cumulative TTN and is rejected rather than silently clamped.
+    /// The primitive already includes quadrature scaling; do not scale again.
+    static Scalar eval_rect_indefinite_integrator(
+        const mState& indefinite_values,
+        const mGrid& grid,
+        const std::vector<RealScalar>& x_min,
+        const std::vector<RealScalar>& x_max)
+    {
+        validate_grid(grid);
+        const auto dimensions = static_cast<std::size_t>(grid.get_dim());
+        if (x_min.size() != dimensions || x_max.size() != dimensions)
+            throw std::invalid_argument("QuanticsIntegrator_kD::eval_rect_indefinite_integrator: expected one lower and upper bound per variable");
+        for (std::size_t i = 0; i < dimensions; ++i) {
+            if (!(x_min[i] <= x_max[i]))
+                throw std::invalid_argument("QuanticsIntegrator_kD::eval_rect_indefinite_integrator: require x_min[i] <= x_max[i]");
+            if (!(x_min[i] >= grid.get_a()[i]) || !(x_max[i] < grid.get_b()[i]))
+                throw std::out_of_range("QuanticsIntegrator_kD::eval_rect_indefinite_integrator: bounds must lie in each grid interval [a_i,b_i)");
+        }
+
+        const auto id_min = grid.coord_to_id(x_min);
+        const auto id_max = grid.coord_to_id(x_max);
+        const auto bits = static_cast<std::size_t>(grid.get_nBits().front());
+        for (std::size_t i = 0; i < dimensions; ++i) {
+            const auto offset = i * bits;
+            if (std::equal(id_min.begin() + offset, id_min.begin() + offset + bits,
+                           id_max.begin() + offset))
+                return Scalar(0);
+        }
+        auto id = id_min;
+
+        // Take one upper-minus-lower difference per variable. Expanding these
+        // differences evaluates every mixed corner with its inclusion-exclusion sign.
+        const auto evaluate_corners = [&](auto&& self, std::size_t dimension) -> Scalar {
+            if (dimension == dimensions) return indefinite_values.eval(id);
+            const auto offset = dimension * bits;
+            std::copy_n(id_min.begin() + offset, bits, id.begin() + offset);
+            const Scalar lower = self(self, dimension + 1);
+            std::copy_n(id_max.begin() + offset, bits, id.begin() + offset);
+            const Scalar upper = self(self, dimension + 1);
+            return upper - lower;
+        };
+        return evaluate_corners(evaluate_corners, 0);
+    }
+
 private:
     // ======================================================================
     // Helpers
     // ======================================================================
+
+    /// Compute the separable-kernel convolution response and scale once by dV.
+    /// Each lag grid must be [0, b_i-a_i), with matching bits and spacing.
+    /// Require kernels[i](0) == 0 to exclude equal-index samples in every variable.
+    /// Return {response_ttn, value_grid}; neither input is modified.
+    static std::pair<mState, mGrid> make_indefinite_integral_conv(
+        const mState& values,
+        const mGrid& value_grid,
+        const std::vector<MPS<Scalar>>& kernels,
+        const mGrid& kernel_grid,
+        int max_bond_dim = 0,
+        RealScalar reltol = RealScalar(-1),
+        bool final_compress = true)
+    {
+        validate_grid(value_grid);
+        validate_grid(kernel_grid);
+        if (kernel_grid.get_dim() != value_grid.get_dim())
+            throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: grid dimensions differ");
+        if (kernels.size() != static_cast<std::size_t>(value_grid.get_dim()))
+            throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: expected one kernel per variable");
+
+        for (std::size_t i = 0; i < kernels.size(); ++i) {
+            if (!(value_grid.get_dx()[i] > RealScalar(0)))
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: grid spacing must be positive");
+            if (kernel_grid.get_a()[i] != RealScalar(0))
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: each kernel grid must start at zero");
+            if (kernel_grid.get_b()[i] != value_grid.get_b()[i] - value_grid.get_a()[i])
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: each kernel grid must end at b_i-a_i");
+            if (kernel_grid.get_nBits()[i] != value_grid.get_nBits()[i])
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: grid bit counts differ");
+            if (kernel_grid.get_dx()[i] != value_grid.get_dx()[i])
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: grid spacings differ");
+
+            // Validate before eval(), which otherwise assumes compatible binary cores.
+            const auto& cores = kernels[i].get_core();
+            if (cores.size() != static_cast<std::size_t>(value_grid.get_nBits()[i]))
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: kernel length differs from grid bit count");
+            if (cores.front().n_rows != 1 || cores.back().n_slices != 1)
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: kernel boundary bonds must have dimension one");
+            for (std::size_t site = 0; site < cores.size(); ++site) {
+                const auto& core = cores[site];
+                if (core.n_cols != 2 || core.n_rows <= 0 || core.n_slices <= 0)
+                    throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: invalid binary kernel core dimensions");
+                if (site > 0 && cores[site - 1].n_slices != core.n_rows)
+                    throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: kernel internal bond mismatch");
+            }
+            const std::vector<int> zero_bits(cores.size(), 0);
+            if (kernels[i].eval(zero_bits) != Scalar(0))
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_indefinite_integral_conv: each kernel must be zero at the origin");
+        }
+
+        // TTN::conv validates signal branches against the kernel lengths and applies
+        // the requested contraction/compression settings, but no quadrature weights.
+        auto response = values.conv(kernels, max_bond_dim, reltol, final_compress);
+        response *= Scalar(value_grid.delta_volume());
+        return {std::move(response), value_grid};
+    }
 
     void validate_range(const IndexRange& range) const
     {

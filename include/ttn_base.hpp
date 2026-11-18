@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mpo_base.h"
+#include "magic_tensor.hpp"
 #include <xfac_quad/cubemat_helper.h>
 #include <xfac_quad/tree/tensor_tree.hpp>
 
@@ -206,6 +207,111 @@ public:
     //                      TTN operator:
     // =============================================================
 
+    /// Return a scaled copy (ttn * scalar), leaving this TTN unchanged.
+    /// Preserve the centre, bond dimensions, topology, and truncation settings.
+    TTN operator*(T scalar) const
+    {
+        TTN result(*this);
+        result *= scalar;
+        return result;
+    }
+
+    /// Return a scaled copy with the scalar on the left (scalar * ttn).
+    friend TTN operator*(T scalar, const TTN& tree)
+    {
+        return tree * scalar;
+    }
+
+    /// Scale in place (ttn *= scalar) and return this TTN by reference.
+    /// Scale only the canonical centre, or the root if w == -1; no sweep or truncation.
+    /// Keep w and all bond dimensions unchanged, including when scalar is zero.
+    TTN& operator*=(T scalar)
+    {
+        // Scaling only the centre preserves all other isometries, even for zero.
+        // With no defined centre, scale the root without canonicalising the tree.
+        const int node = w == -1 ? ttn_body.tree.root : w;
+        for (auto& value : ttn_body.M.at(node).data)
+            value *= scalar;
+        return *this;
+    }
+
+    /// Causal convolution with one independent 1D MPS kernel per branch.
+    /// For three variables, the discrete result is:
+    ///   C[p,q,r] = sum(i=0..p) sum(j=0..q) sum(k=0..r)
+    ///                f[i,j,k] * Kx[p-i] * Ky[q-j] * Kz[r-k].
+    /// Its continuum counterpart, after applying the grid-cell volume, is:
+    ///   dx * dy * dz * C[p,q,r] approximately equals
+    ///     integral(u=ax..x[p]) integral(v=ay..y[q]) integral(w=az..z[r])
+    ///       f(u,v,w) * Kx(x[p]-u) * Ky(y[q]-v) * Kz(z[r]-w) dw dv du.
+    /// kernels[i] acts on branch i; cores are binary and least-significant first.
+    /// Return a new TTN, retaining the bit counts and leaving both inputs unchanged.
+    /// Discard overflow without periodic wraparound; apply no grid-volume scaling.
+    /// Each kernel must match its branch length and have trivial boundary bonds.
+    /// Requested truncation settings override the inputs' settings for every contraction.
+    /// final_compress adds a full-tree SVD sweep with the same settings.
+    TTN conv(
+        const std::vector<MPS<T>>& kernels,
+        int max_bond_dim_ = 0,
+        RealScalar reltol_ = RealScalar(-1),
+        bool final_compress = true) const
+    {
+        if (!ttn_body.tree.branches || ttn_body.tree.branches->empty() ||
+            kernels.size() != ttn_body.tree.branches->size())
+            throw std::invalid_argument("TTN::conv: expected one kernel per branch and nonempty branch metadata");
+
+        // Validate every branch and kernel before beginning any contraction.
+        std::set<int> covered;
+        for (std::size_t i = 0; i < kernels.size(); ++i) {
+            _branch_axes(static_cast<int>(i));
+            const auto& branch = ttn_body.tree.branches->at(i);
+            for (int node : branch.nodes) {
+                if (!covered.insert(node).second)
+                    throw std::invalid_argument("TTN::conv: branches must not overlap");
+                if (ttn_body.M.at(node).n_slices != 2)
+                    throw std::invalid_argument("TTN::conv: expected signal physical dimension two");
+            }
+            const auto& cores = kernels[i].get_core();
+            if (cores.size() != branch.nodes.size())
+                throw std::invalid_argument("TTN::conv: kernel length must match its branch");
+            if (cores.front().n_rows != 1 || cores.back().n_slices != 1)
+                throw std::invalid_argument("TTN::conv: kernel boundary bonds must have dimension one");
+            for (std::size_t site = 0; site < cores.size(); ++site) {
+                const auto& core = cores[site];
+                if (core.n_cols != 2 || core.n_rows <= 0 || core.n_slices <= 0)
+                    throw std::invalid_argument("TTN::conv: invalid binary kernel core dimensions");
+                if (site > 0 && cores[site - 1].n_slices != core.n_rows)
+                    throw std::invalid_argument("TTN::conv: kernel internal bond mismatch");
+            }
+        }
+        if (covered != ttn_body.tree.nodes)
+            throw std::invalid_argument("TTN::conv: branches must cover all physical nodes");
+
+        // Use the requested settings throughout, without modifying either input.
+        TTN configured_signal(*this);
+        configured_signal.max_bond_dim = max_bond_dim_;
+        configured_signal.reltol = reltol_;
+        for (std::size_t i = 0; i < kernels.size(); ++i) {
+            MPS<T> configured_kernel(kernels[i].get_core(), max_bond_dim_, reltol_,
+                                     kernels[i].get_w());
+
+            // Steps 1-2: build the magic tensor and contract the kernel's m' leg.
+            const auto magic_result = magic_tensor_product(configured_kernel);
+            // Step 3: interpret the remaining (n'*m) cores as an MPO.
+            auto convolution_mpo = reshape_magic_res(magic_result);
+            // Step 4: apply it to this branch. Centre moves are QR-only; the MPO
+            // multiplication uses the requested settings on both operands.
+            configured_signal.mul_branch(static_cast<int>(i), std::move(convolution_mpo),
+                                         /*compress=*/false, "zip-up");
+        }
+        if (final_compress)
+            configured_signal.compress_svd(reltol_, max_bond_dim_);
+        return configured_signal;
+    }
+
+    /// Apply an MPO to one branch by extracting, multiplying, and reinserting its MPS.
+    /// Restore the original centre when defined; otherwise keep the branch endpoint.
+    /// compress controls centre preparation/restoration; multiplication independently
+    /// uses the operands' truncation settings. The caller's MPO is unchanged.
     void mul_branch(
         int branch_id,
         MPO<T> mpo,
@@ -238,6 +344,8 @@ public:
         _insert_branch(branch_id, std::move(result), original_w, compress);
     }
 
+    /// Prepare the centre at the branch endpoint, optionally compressing, then
+    /// return a leaf-to-endpoint MPS with an open right bond to the attachment.
     MPS<T> _extract_branch(int branch_id, bool compress)
     {
         const auto axes = _branch_axes(branch_id);
@@ -268,7 +376,9 @@ public:
                       static_cast<int>(branch.nodes.size()) - 1);
     }
 
-    // The incoming MPS must use the same attachment gauge as the tree.
+    /// Replace a branch with an MPS, then restore original_w using compress.
+    /// If original_w == -1, keep the centre at the branch endpoint.
+    /// The incoming MPS must use the same attachment gauge as the tree.
     void _insert_branch(int branch_id, MPS<T> branch_mps, int original_w, bool compress)
     {
         // Prepare the replacement before moving the TTN center.
