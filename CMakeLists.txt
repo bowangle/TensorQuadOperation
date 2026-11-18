@@ -67,6 +67,7 @@ if(TQ_BUILD_TESTS)
         test_compress_svd
         test_mpo
         test_quantics_integrator
+        test_quantics_integrator_kD
         test_indefinite_integral
         test_analytics_construction
         test_convolution)

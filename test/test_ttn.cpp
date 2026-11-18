@@ -114,25 +114,6 @@ qtgrid::MultQTGrid<Real, Sint> make_grid()
             {bits_per_variable, bits_per_variable, bits_per_variable}};
 }
 
-// makeTuckerTree uses axis + bit*dimensions, whereas MultQTGrid uses
-// axis*bits_per_variable + bit. Preserve the topology and neighbor/axis order.
-xfac_quad::TopologyTree make_grouped_tucker_tree()
-{
-    const auto source = xfac_quad::makeTuckerTree(dimensions, bits_per_variable);
-    const auto grouped_id = [](int node) {
-        return node >= 0 && node < physical_count
-            ? (node % dimensions) * bits_per_variable + node / dimensions : node;
-    };
-    xfac_quad::TopologyTree tree(grouped_id(source.root));
-    for (int node : source.nodes)
-        tree.nodes.insert(grouped_id(node));
-    for (const auto& [node, neighbors] : source.neigh)
-        for (int neighbor : neighbors.from_int())
-            tree.neigh[grouped_id(node)].push_back(grouped_id(neighbor));
-    check(xfac_quad::isValid(tree), "grouped Tucker topology is valid");
-    return tree;
-}
-
 std::vector<std::vector<int>> all_points()
 {
     // Exhaust all 8^3 coordinate combinations, including every leaf's bits.
@@ -246,7 +227,9 @@ void prepare_fixture(int function_id, const std::string& filename)
 {
     using T = std::complex<float128>;
     const auto grid = make_grid<float128, long long>();
-    const auto tree = make_grouped_tucker_tree();
+    // Tucker node blocks already match MultQTGrid's per-variable bit ordering.
+    const auto tree = xfac_quad::makeTuckerTree(dimensions, bits_per_variable);
+    check(xfac_quad::isValid(tree), "grouped Tucker topology is valid");
     const auto function = function_id == 1 ? function_1<T> : function_2<T>;
     xfac_quad::TensorTreeCIParam<T> param;
     param.bondDim = 16;
@@ -744,21 +727,18 @@ void test_large_tci_branch(RealOf<T> truncation_tolerance)
         return T(cos(angle), sin(angle));
     };
     const auto tree = xfac_quad::makeTuckerTree(3, bits);
-    // Preserve makeTuckerTree's interleaved node IDs. The leaf bit is most significant.
-    const auto coordinates = [](const std::vector<int>& id) {
-        std::vector<Real> point(3, Real(-1));
-        for (int bit = 0; bit < bits; ++bit)
-            for (int variable = 0; variable < 3; ++variable)
-                point[variable] += Real(id[variable + 3 * bit]) / Real(std::uint64_t(1) << bit);
-        return point;
+    // Contiguous variable blocks, with the least-significant bit at each leaf.
+    const qtgrid::MultQTGrid<Real, util::i128> grid(
+        {Real(-1), Real(-1), Real(-1)}, {Real(1), Real(1), Real(1)}, {bits, bits, bits});
+    const auto coordinates = [&grid](const std::vector<int>& id) {
+        return grid.id_to_coord(id);
     };
     const auto function = [&](const std::vector<int>& id) { return function_1<T>(coordinates(id)); };
     xfac_quad::TensorTreeCIParam<T> parameters;
     parameters.bondDim = 16;
     parameters.reltol = truncation_tolerance;
     parameters.fullPiv = true;
-    parameters.pivot1.assign(count, 0);
-    for (int variable = 0; variable < 3; ++variable) parameters.pivot1[variable] = 1;
+    parameters.pivot1 = grid.coord_to_id({Real(0), Real(0), Real(0)});
     xfac_quad::TensorTreeCI<T> ci(function, tree, std::vector<int>(count, 2), parameters);
     ci.iterate(8);
     const TTN<T> baseline(ci.tt, 64, truncation_tolerance, count);
@@ -769,7 +749,7 @@ void test_large_tci_branch(RealOf<T> truncation_tolerance)
     std::vector<std::vector<int>> points;
     for (int corner = 0; corner < 8; ++corner) {
         std::vector<int> id(count);
-        for (int node = 0; node < count; ++node) id[node] = (corner >> (node % 3)) & 1;
+        for (int node = 0; node < count; ++node) id[node] = (corner >> (node / bits)) & 1;
         points.push_back(std::move(id));
     }
     for (int node = 0; node < count; ++node) {
@@ -795,8 +775,10 @@ void test_large_tci_branch(RealOf<T> truncation_tolerance)
         Tensor core(site == 0 ? 1 : 2, 4, site == bits - 1 ? 1 : 2);
         for (int row = 0; row < 2; ++row) {
             core(0, 3 * row, 0) = T(1);
-            T phase = phase_factor(theta * Real(row) / Real(std::uint64_t(1) << site));
-            if (site == 0) phase *= coefficient * phase_factor(-theta);
+            // The phase uses the same LSB-first coordinate weights as MultQTGrid.
+            T phase = phase_factor(theta * Real(row) * grid.get_dx().front()
+                                  * Real(std::uint64_t(1) << site));
+            if (site == 0) phase *= coefficient * phase_factor(theta * grid.get_a().front());
             core(site == 0 ? 0 : 1, 2 * row + (1 - row), site == bits - 1 ? 0 : 1) = phase;
         }
         cores.push_back(std::move(core));

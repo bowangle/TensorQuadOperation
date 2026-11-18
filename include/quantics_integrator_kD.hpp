@@ -6,6 +6,8 @@
 #include <xfac_quad_runner/xf-quad-param.hpp>
 #include <Eigen/Dense>
 #include <spdlog/logger.h>
+#include <array>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <set>
@@ -23,6 +25,12 @@ public:
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using mGrid = qtgrid::MultQTGrid<RealScalar, Sint>;
     using mState = TTN<Scalar>;
+
+    /// Half-open rectangular grid-index range: [begin[i], end[i]) in variable i.
+    struct IndexRange {
+        std::vector<Sint> begin;
+        std::vector<Sint> end;
+    };
 
     struct FitOptions {
         std::vector<std::vector<RealScalar>> additional_pivots;
@@ -57,16 +65,12 @@ public:
         FitOptions options = {},
         std::shared_ptr<spdlog::logger> logger = nullptr
     ){
-        // some validation of inputs
+        // Validate the grid before fitting or creating output files.
+        validate_grid(grid);
         if (!function)
             throw std::invalid_argument("QuanticsIntegrator_kD::fit: function is empty");
         if (save_prefix.empty())
             throw std::invalid_argument("QuanticsIntegrator_kD::fit: save_prefix is empty");
-        if (grid.get_dim() <= 0)
-            throw std::invalid_argument("QuanticsIntegrator_kD::fit: grid must have at least one dimension");
-        for (int bits : grid.get_nBits())
-            if (bits <= 0)
-                throw std::invalid_argument("QuanticsIntegrator_kD::fit: each dimension needs at least one bit");
         if (options.nb_point_res <= 0)
             throw std::invalid_argument("QuanticsIntegrator_kD::fit: nb_point_res must be positive");
         if (parameters.nb_iter < 0 || parameters.bondDim <= 0)
@@ -80,8 +84,8 @@ public:
         for (const auto& pivot : options.additional_pivots)
             (void)grid.coord_to_id(pivot);
 
-        // generate tree_topology from grid
-        auto tree = make_tree(grid);
+        // Contiguous Tucker node blocks match MultQTGrid's grouped bit ordering.
+        auto tree = xfac_quad::makeTuckerTree(grid.get_dim(), grid.get_nBits().front());
         const int max_bond_dim = parameters.bondDim;
         const RealScalar reltol = parameters.reltol;
         // call TTCI_runner to fit the function on the grid and save the result
@@ -111,50 +115,166 @@ public:
     // methods
     // ======================================================================
 
+    /// Integrate over the full grid by summing all physical legs and scaling
+    /// by the grid-cell volume (the product of spacings over all variables).
+    [[nodiscard]] Scalar integrate() const
+    {
+        return values_.get_TTN_body().sum() * Scalar(grid_.delta_volume());
+    }
+
+    /// Integrate a rectangular index range without modifying or truncating the TTN.
+    [[nodiscard]] Scalar integrate(const IndexRange& range) const
+    {
+        validate_range(range);
+        bool empty = false, full = true;
+        for (std::size_t i = 0; i < range.begin.size(); ++i) {
+            empty = empty || range.begin[i] == range.end[i];
+            full = full && range.begin[i] == Sint(0) && range.end[i] == grid_.get_N()[i];
+        }
+        if (empty) return Scalar(0);
+        if (full) return integrate();
+
+        const auto& body = values_.get_TTN_body();
+        xfac_quad::TensorTree<Scalar> contracted(body.tree);
+        for (const auto& [node, neighbors] : body.tree.neigh)
+            if (!body.tree.nodes.contains(node)) contracted.M.at(node) = body.M.at(node);
+
+        // Collapse each masked branch to its attachment-bond vector. Unit tensors
+        // retain the original topology, including physical roots and the two-variable cut.
+        for (std::size_t i = 0; i < range.begin.size(); ++i) {
+            const auto& branch = body.tree.branches->at(i);
+            for (int node : branch.nodes) {
+                contracted.M.at(node) = xfac_quad::Tensor3D<Scalar>(1, 1, 1);
+                contracted.M.at(node).data[0] = Scalar(1);
+            }
+            contracted.M.at(branch.nodes.back()) =
+                contract_branch_range(i, range.begin[i], range.end[i]);
+        }
+        return contracted.sum() * Scalar(grid_.delta_volume());
+    }
+
 private:
     // ======================================================================
     // Helpers
     // ======================================================================
 
-    static xfac_quad::TopologyTree make_tree(const mGrid& grid)
+    void validate_range(const IndexRange& range) const
     {
-        const int dimensions = grid.get_dim();
-        const int physical_count = grid.get_tensorLen();
-        // Reuse the Tucker junction structure, extending each endpoint into its bit chain.
-        const auto skeleton = xfac_quad::makeTuckerTree(dimensions, 1);
-        xfac_quad::TopologyTree tree(0);
-        tree.branches.emplace(dimensions);
-        std::vector<int> endpoints;
-        int offset = 0;
-        for (int dimension = 0; dimension < dimensions; ++dimension) {
-            auto& branch = tree.branches->at(dimension);
-            for (int bit = 0; bit < grid.get_nBits().at(dimension); ++bit) {
-                const int node = offset + bit;
-                tree.nodes.insert(node);
-                tree.neigh[node]; // Also register the isolated one-site case.
-                branch.nodes.push_back(node);
-                if (bit > 0) tree.addEdge(node - 1, node);
-            }
-            endpoints.push_back(branch.nodes.back());
-            offset += grid.get_nBits().at(dimension);
-        }
-        const auto mapped_node = [&](int node) {
-            return node < dimensions ? endpoints.at(node) : physical_count + node - dimensions;
+        const auto dimensions = static_cast<std::size_t>(grid_.get_dim());
+        if (range.begin.size() != dimensions || range.end.size() != dimensions)
+            throw std::invalid_argument("QuanticsIntegrator_kD: index range needs one begin and end per variable");
+        for (std::size_t i = 0; i < dimensions; ++i)
+            if (range.begin[i] < Sint(0) || range.end[i] < range.begin[i] ||
+                range.end[i] > grid_.get_N()[i])
+                throw std::out_of_range("QuanticsIntegrator_kD: index range must lie in [0, grid.N] for every variable");
+    }
+
+    /// Contract an interval indicator along a leaf-to-attachment branch.
+    /// As in the 1D Heaviside mask, comparison states are EQ, GT, and LT.
+    /// With LSB-first bits, each higher unequal bit overrides the lower-bit
+    /// comparison. Tracking both boundaries avoids subtraction of prefix sums.
+    xfac_quad::Tensor3D<Scalar> contract_branch_range(
+        std::size_t dimension, Sint begin, Sint end) const
+    {
+        using Row = Eigen::Matrix<Scalar, 1, Eigen::Dynamic>;
+        constexpr int equal = 0, greater = 1, less = 2;
+        const auto compare = [=](int previous, int bit, int boundary_bit) {
+            return bit == boundary_bit ? previous : bit > boundary_bit ? greater : less;
         };
-        for (const auto& [node, neighbors] : skeleton.neigh)
+        const bool full_upper = end == grid_.get_N().at(dimension);
+        std::array<Row, 9> environment;
+        for (auto& row : environment) row = Row::Zero(1);
+        std::array<bool, 9> active{};
+        const int initial = full_upper ? less : equal;
+        environment[initial](0) = Scalar(1);
+        active[initial] = true;
+
+        const auto& body = values_.get_TTN_body();
+        const auto& branch = body.tree.branches->at(dimension);
+        int endpoint_axis = 1;
+        for (std::size_t site = 0; site < branch.nodes.size(); ++site) {
+            const int node = branch.nodes[site];
+            const int previous = site == 0 ? -1 : branch.nodes[site - 1];
+            const int next = site + 1 < branch.nodes.size() ? branch.nodes[site + 1] : branch.attachment;
+            const auto& neighbors = body.tree.neigh.at(node);
             for (int neighbor : neighbors.from_int())
-                if (node < neighbor)
-                    tree.addEdge(mapped_node(node), mapped_node(neighbor));
-        for (int dimension = 0; dimension < dimensions; ++dimension) {
-            const int attachment = skeleton.branches->at(dimension).attachment;
-            if (attachment != -1)
-                tree.branches->at(dimension).attachment = mapped_node(attachment);
+                if (neighbor != -1 && neighbor != previous && neighbor != next)
+                    throw std::invalid_argument("QuanticsIntegrator_kD: branch has an unexpected external connection");
+            int left = previous == -1 ? -1 : neighbors.pos(previous);
+            int right = next == -1 ? -1 : neighbors.pos(next);
+            if ((previous != -1 && (left < 0 || left > 1)) ||
+                (next != -1 && (right < 0 || right > 1)))
+                throw std::invalid_argument("QuanticsIntegrator_kD: invalid branch bond axis");
+            if (left == -1) left = right == -1 ? 0 : 1 - right;
+            if (right == -1) right = 1 - left;
+            if (left == right)
+                throw std::invalid_argument("QuanticsIntegrator_kD: invalid branch ordering");
+
+            const auto& core = body.M.at(node);
+            const std::array<Eigen::Index, 2> shape{core.n_rows, core.n_cols};
+            if (shape[left] != environment[0].size() || shape[right] <= 0 ||
+                (next == -1 && shape[right] != 1))
+                throw std::invalid_argument("QuanticsIntegrator_kD: branch bond dimension mismatch");
+            if (next != -1) {
+                const int reciprocal = body.tree.neigh.at(next).pos(node);
+                const auto& neighbor = body.M.at(next);
+                const std::array<Eigen::Index, 3> neighbor_shape{
+                    neighbor.n_rows, neighbor.n_cols, neighbor.n_slices};
+                if (reciprocal < 0 || reciprocal > 2 || shape[right] != neighbor_shape[reciprocal])
+                    throw std::invalid_argument("QuanticsIntegrator_kD: attachment bond dimension mismatch");
+            }
+
+            std::array<Row, 9> updated;
+            for (auto& row : updated) row = Row::Zero(shape[right]);
+            std::array<bool, 9> next_active{};
+            const int lower_bit = static_cast<int>((begin >> site) & Sint(1));
+            const int upper_bit = static_cast<int>((end >> site) & Sint(1));
+            for (int state = 0; state < 9; ++state) {
+                if (!active[state]) continue;
+                for (int bit = 0; bit < 2; ++bit) {
+                    const int lower = compare(state / 3, bit, lower_bit);
+                    const int upper = full_upper ? less : compare(state % 3, bit, upper_bit);
+                    const int target = 3 * lower + upper;
+                    // Transpose is an axis permutation, never complex conjugation.
+                    if (left == 0)
+                        updated[target].noalias() += environment[state] * core.slice_const(bit);
+                    else
+                        updated[target].noalias() += environment[state] * core.slice_const(bit).transpose();
+                    next_active[target] = true;
+                }
+            }
+            environment = std::move(updated);
+            active = next_active;
+            endpoint_axis = right;
         }
-        return tree;
+
+        // Accept begin <= index < end, leaving only the bond to the exterior.
+        const Row message = environment[3 * equal + less] + environment[3 * greater + less];
+        const auto rank = message.size();
+        xfac_quad::Tensor3D<Scalar> result(endpoint_axis == 0 ? rank : 1,
+                                          endpoint_axis == 1 ? rank : 1, 1);
+        for (Eigen::Index bond = 0; bond < rank; ++bond)
+            if (endpoint_axis == 0) result(bond, 0, 0) = message(bond);
+            else result(0, bond, 0) = message(bond);
+        return result;
+    }
+
+    static void validate_grid(const mGrid& grid)
+    {
+        const auto& bit_counts = grid.get_nBits();
+        if (grid.get_dim() <= 0 || bit_counts.empty())
+            throw std::invalid_argument("QuanticsIntegrator_kD: grid must have at least one dimension");
+        for (int bits : bit_counts) {
+            if (bits <= 0)
+                throw std::invalid_argument("QuanticsIntegrator_kD: each variable needs at least one bit");
+            if (bits != bit_counts.front())
+                throw std::invalid_argument("QuanticsIntegrator_kD: all grid variables must have the same number of bits");
+        }
     }
 
     void validate() const
     {
+        validate_grid(grid_);
         const auto& body = values_.get_TTN_body();
         const auto& tree = body.tree;
         if (grid_.get_dim() <= 0 || !tree.branches ||
