@@ -130,8 +130,8 @@ public:
     //                      TTN Canonicalisation:
     // =============================================================
 
-    // Canonicalise toward new_w using QR, optionally truncating R with SVD.
-    void canonify_to_center(int new_w, bool compress=false)
+    // Canonicalise toward new_w using QR only, without truncation.
+    void canonify_to_center(int new_w)
     {
         if (new_w == -1)
             return;
@@ -141,7 +141,7 @@ public:
             throw std::invalid_argument("TTN::canonify_to_center: invalid node");
 
         for (const auto& [from, to] : tree.leavesToRoot(new_w)) {
-            _canonify_bond(from, to, compress);
+            _canonify_bond(from, to, false);
         }
         w = new_w;
     }
@@ -154,7 +154,10 @@ public:
             throw std::invalid_argument("TTN::move_canonical_center: invalid node");
 
         if (w == -1) {
-            canonify_to_center(new_w, compress);
+            canonify_to_center(new_w);
+            if (compress){
+                compress_svd(reltol, max_bond_dim);
+            }
             return;
         }
         if (w == new_w)
@@ -173,9 +176,9 @@ public:
         }
     }
 
-    void _initialize_w(int new_w, bool compress=false)
+    void _initialize_w(int new_w)
     {
-        canonify_to_center(new_w, compress);
+        canonify_to_center(new_w);
     }
 
     // Make from isometric toward to and absorb the remainder into to.
@@ -225,25 +228,22 @@ public:
             throw std::invalid_argument("TTN::mul_branch: unknown multiplication method");
         const int original_w = w;
         // 1: move canonical center of the tree in the branch root
-        // extract_branch performs this move without truncation.
+        // _extract_branch optionally compresses during this move.
         // 2: extract the branch mps from it and set it's canonical center 
         //    (have an additional dangling leg on the side)
-        auto branch_mps = extract_branch(branch_id);
+        auto branch_mps = _extract_branch(branch_id, compress);
         // 3 : multiply the mpo with the branch mps 
         auto result = mpo._mul(branch_mps, method, order, n_sweeps);
         // 4: put the result back in the tree and move the canonical center back to the original position
-        insert_branch(branch_id, std::move(result));
-        // compress controls the return move; MPO multiplication uses the operands' truncation settings.
-        if (original_w != -1)
-            move_canonical_center(original_w, compress);
+        _insert_branch(branch_id, std::move(result), original_w, compress);
     }
 
-    MPS<T> extract_branch(int branch_id)
+    MPS<T> _extract_branch(int branch_id, bool compress)
     {
         const auto axes = _branch_axes(branch_id);
         const auto& branch = ttn_body.tree.branches->at(branch_id);
         // 1: move canonical center of the tree in the branch root (updates TTN::w)
-        move_canonical_center(branch.nodes.back());
+        move_canonical_center(branch.nodes.back(), compress);
         // 2: extract the branch mps from it and set it's canonical center 
         //    (have an additional dangling leg on the side)
         VecTT cores;
@@ -268,7 +268,8 @@ public:
                       static_cast<int>(branch.nodes.size()) - 1);
     }
 
-    void insert_branch(int branch_id, MPS<T> branch_mps, int new_w=-1)
+    // The incoming MPS must use the same attachment gauge as the tree.
+    void _insert_branch(int branch_id, MPS<T> branch_mps, int original_w, bool compress)
     {
         // Prepare the replacement before moving the TTN center.
         // Validate the branch topology and recover each node's stored bond axes.
@@ -277,21 +278,21 @@ public:
         const auto& cores = std::as_const(branch_mps).get_core();
         // Check the requested center and compatibility with the existing branch.
         // The leaf boundary is trivial; the right boundary connects to the tree.
-        if (new_w != -1 && !ttn_body.tree.neigh.contains(new_w))
-            throw std::invalid_argument("TTN::insert_branch: invalid target center");
+        if (original_w != -1 && !ttn_body.tree.neigh.contains(original_w))
+            throw std::invalid_argument("TTN::_insert_branch: invalid target center");
         if (cores.size() != branch.nodes.size())
-            throw std::invalid_argument("TTN::insert_branch: branch length mismatch");
+            throw std::invalid_argument("TTN::_insert_branch: branch length mismatch");
         const auto& endpoint = ttn_body.M.at(branch.nodes.back());
         const std::array<Eigen::Index, 2> endpoint_shape{endpoint.n_rows, endpoint.n_cols};
         if (cores.front().n_rows != 1 ||
             cores.back().n_slices != endpoint_shape[axes.back()[1]])
-            throw std::invalid_argument("TTN::insert_branch: boundary dimension mismatch");
+            throw std::invalid_argument("TTN::_insert_branch: boundary dimension mismatch");
         for (std::size_t i = 0; i < cores.size(); ++i) {
             if (cores[i].n_cols != ttn_body.M.at(branch.nodes[i]).n_slices ||
                 cores[i].n_rows <= 0 || cores[i].n_slices <= 0)
-                throw std::invalid_argument("TTN::insert_branch: invalid core dimensions");
+                throw std::invalid_argument("TTN::_insert_branch: invalid core dimensions");
             if (i > 0 && cores[i - 1].n_slices != cores[i].n_rows)
-                throw std::invalid_argument("TTN::insert_branch: internal bond mismatch");
+                throw std::invalid_argument("TTN::_insert_branch: internal bond mismatch");
         }
         // Canonicalize the incoming MPS at its last site, the attachment endpoint.
         // branch_mps is a local copy; cores references its updated tensors.
@@ -325,15 +326,16 @@ public:
         const std::array<Eigen::Index, 2> centered_shape{
             centered_endpoint.n_rows, centered_endpoint.n_cols};
         if (cores.back().n_slices != centered_shape[axes.back()[1]])
-            throw std::invalid_argument("TTN::insert_branch: attachment dimension changed during center movement");
+            throw std::invalid_argument("TTN::_insert_branch: attachment dimension changed during center movement");
         // 2: insert the branch mps into the tree and set its canonical center
         //    (have an additional dangling leg on the side)
         for (std::size_t i = 0; i < replacements.size(); ++i)
             ttn_body.M.at(branch.nodes[i]) = std::move(replacements[i]);
         w = branch.nodes.back();
-        // 3: move the canonical center back to new_w (if new_w==-1, keep it at the branch attachment node)
-        if (new_w != -1)
-            move_canonical_center(new_w);
+        // 3: restore the original center, optionally compressing the return path.
+        // If original_w == -1, keep the center at the branch endpoint.
+        if (original_w != -1)
+            move_canonical_center(original_w, compress);
     }
 
 private:

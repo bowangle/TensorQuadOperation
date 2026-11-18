@@ -402,10 +402,14 @@ void test_ttn(const std::string& type_name, int function_id, const std::string& 
         check_values("copy independence", baseline.eval_list(points), reference, numeric_tolerance<T>());
     });
 
-    timed("optional QR+SVD uses stored rank cap", [&] {
+    timed("separate SVD compression and centre moves use stored rank cap", [&] {
         TTN<T> ttn(original, 1, Real(-1), -1);
-        ttn.canonify_to_center(junction, true);
-        check(ttn.get_chi() == 1, "canonify compresses using stored cap");
+        ttn.canonify_to_center(junction);
+        check(ttn.get_chi() > 1, "QR-only canonicalisation ignores stored rank cap");
+        check_canonical(ttn);
+        check_values("QR-only canonicalisation", ttn.eval_list(points), reference, numeric_tolerance<T>());
+        ttn.compress_svd(ttn.get_reltol(), ttn.get_max_bond_dim());
+        check(ttn.get_chi() == 1, "explicit SVD compression applies stored cap");
         check_canonical(ttn);
         TTN<T> moving(original, 1, Real(-1), 0);
         const int target = bits_per_variable;
@@ -553,16 +557,16 @@ void test_branch_operations()
             for (int branch_id = 0; branch_id < 3; ++branch_id) {
                 const auto& branch = body.tree.branches->at(branch_id);
                 auto roundtrip = baseline;
-                auto extracted = roundtrip.extract_branch(branch_id);
+                auto extracted = roundtrip._extract_branch(branch_id, false);
                 check(extracted.get_w() == length - 1, "extracted MPS center at attachment endpoint");
                 check(roundtrip.get_w() == branch.nodes.back(), "extraction moves TTN center");
                 check(std::as_const(extracted).get_core().back().n_slices == 2,
                       "branch fixture exercises nontrivial dangling leg");
                 check_values("extraction preserves TTN", roundtrip.eval_list(points), original_values, tolerance);
-                roundtrip.insert_branch(branch_id, extracted);
-                check(roundtrip.get_w() == branch.nodes.back(), "default insertion center");
+                roundtrip._insert_branch(branch_id, extracted, -1, false);
+                check(roundtrip.get_w() == branch.nodes.back(), "insertion keeps branch center");
                 check_canonical(roundtrip);
-                roundtrip.insert_branch(branch_id, extracted, center);
+                roundtrip._insert_branch(branch_id, extracted, center, false);
                 check(roundtrip.get_w() == center, "insertion restores requested center");
                 check_canonical(roundtrip);
                 check_values("branch roundtrip", roundtrip.eval_list(points), original_values, tolerance);
