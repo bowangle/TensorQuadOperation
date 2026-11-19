@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mps_base.h"
+#include "TensorQuadOperation/mps_base.h"
 
 #include <pi.h>
 #include <QTgrid-quad/grid.h>
@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace analytic_mps_construction {
+namespace TensorQuadOperation::analytic_mps_construction {
 
 using xfac_quad::Tensor3D;
 
@@ -634,5 +634,5 @@ make_polynomial_orderp_mps(
     return {std::move(mps), std::move(grid)};
 }
 
-} // namespace analytic_mps_construction
+} // namespace TensorQuadOperation::analytic_mps_construction
 

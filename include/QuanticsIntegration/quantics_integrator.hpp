@@ -1,7 +1,7 @@
 #pragma once
 
-#include "indefinite_integral.hpp"
-#include "mpo_base.h"
+#include "QuanticsIntegration/indefinite_integral.hpp"
+#include "TensorQuadOperation/mpo_base.h"
 
 #include <type_int128.h>
 #include <xfac_quad_runner/xf-qd-runner.hpp>
@@ -19,6 +19,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace QuanticsIntegration {
 
 /// Parameters required by QuanticsIntegrator1D::fit():
 ///
@@ -53,7 +55,7 @@ class QuanticsIntegrator1D {
 public:
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid        = qtgrid::QTGrid<RealScalar, Sint>;
-    using State       = MPS<Scalar>;
+    using State       = TensorQuadOperation::MPS<Scalar>;
     using Function    = std::function<Scalar(RealScalar)>;
     using RunnerParam = xfac_quad_runner::TCI2_1D_runner_param<Scalar>;
     using LoggerPtr   = std::shared_ptr<spdlog::logger>;
@@ -187,7 +189,7 @@ public:
 
         const RealScalar length = grid.get_b() - grid.get_a();
         auto [kernel, kernel_grid] =
-            analytic_mps_construction::make_exclusive_heaviside_mps<Scalar, Sint>(
+            TensorQuadOperation::analytic_mps_construction::make_exclusive_heaviside_mps<Scalar, Sint>(
                 length, grid.get_nBits());
         return make_indefinite_integrator_conv(
             values, grid, kernel, kernel_grid,
@@ -393,7 +395,7 @@ private:
             return State(values_ * Scalar(0));
 
         auto interval_operator =
-            MPO<Scalar>::from_mps(make_interval_mps(range));
+            TensorQuadOperation::MPO<Scalar>::from_mps(make_interval_mps(range));
         return interval_operator._mul(values_, "zip-up");
     }
 
@@ -704,3 +706,6 @@ private:
 // Compatibility with the name used by the original placeholder.
 template<typename Scalar, typename Sint = util::i128>
 using QUANTICS_INT_1D = QuanticsIntegrator1D<Scalar, Sint>;
+
+} // namespace QuanticsIntegration
+

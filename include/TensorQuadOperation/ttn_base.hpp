@@ -1,7 +1,7 @@
 #pragma once
 
-#include "mpo_base.h"
-#include "magic_tensor.hpp"
+#include "TensorQuadOperation/mpo_base.h"
+#include "TensorQuadOperation/magic_tensor.hpp"
 #include <xfac_quad/cubemat_helper.h>
 #include <xfac_quad/tree/tensor_tree.hpp>
 
@@ -16,6 +16,8 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+namespace TensorQuadOperation {
 
 template<typename T>
 class TTN {
@@ -554,3 +556,5 @@ public:
     }
 
 };
+
+} // namespace TensorQuadOperation

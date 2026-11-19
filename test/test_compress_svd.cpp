@@ -1,7 +1,7 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include "type_int128.h"
-#include "tt_base.h"
+#include "TensorQuadOperation/tt_base.h"
 
 #include <xfac_quad_runner/xf-qd-runner.hpp>
 
@@ -9,6 +9,8 @@
 #include <spdlog/spdlog.h>
 
 #include <iomanip>
+
+using TensorQuadOperation::TT;
 
 // ============================================================
 // Timer

@@ -46,21 +46,46 @@ Runs CMake (Release, `-march=native`) and builds every test target into `build/`
 bash run_test.sh
 ```
 
-All 7 test executables run in parallel; their output is saved to `test/test_*.txt`.
+The configured test executables run in parallel; their output is saved to `test/test_*.txt`.
 
 ---
 
 ## Library overview
 
+Public headers are split into two folders with matching C++ namespaces:
+
+- `TensorQuadOperation`: tensor types, arithmetic, construction, and contraction helpers. The nested helper namespaces are `TensorQuadOperation::utc` and `TensorQuadOperation::analytic_mps_construction`.
+- `QuanticsIntegration`: grid-aware fitting and integration algorithms, depending on `TensorQuadOperation`, not the reverse.
+
+The CMake target `tensorquad_deps` exposes the `include/` root and dependencies for both layers. Use the prefixed include paths and qualified names; the old flat headers and global project names are no longer provided. Serialized tensor and grid formats are unchanged.
+
+```cpp
+#include "TensorQuadOperation/mps_base.h"
+#include "TensorQuadOperation/ttn_base.hpp"
+#include "QuanticsIntegration/quantics_integrator.hpp"
+#include "QuanticsIntegration/quantics_integrator_kD.hpp"
+
+using State = TensorQuadOperation::MPS<double>;
+using TreeState = TensorQuadOperation::TTN<double>;
+using Integrator1D = QuanticsIntegration::QuanticsIntegrator1D<double>;
+using IntegratorKD = QuanticsIntegration::QuanticsIntegrator_kD<double>;
+```
+
 | Header | Purpose |
 |---|---|
 | `xfac_quad/cubemat_helper.h` (dependency) | Shared `xfac_quad::Tensor3D<T>` — column-major 3-index tensors with views, copies, and serialization |
-| `tt_base.h` | `TT<T>` — generic Tensor Train: canonicalisation, addition, scalar ops, conjugation, evaluation, save/load |
-| `mps_base.h` | `MPS<T>` — Matrix Product State (phys = 2): `dot`, `norm2`, promotion from `TT` |
-| `mpo_base.h` | `MPO<T>` — Matrix Product Operator (phys = 4): `from_mps`, `diag`, `transpose`, `_mul` (apply to MPS/MPO) |
-| `utc.h` | `utc::zip_up_mpo_mps`, `utc::qrsvd_contract_mpo_mps`, `utc::optimize_dm_generic` — contraction kernels |
-| `mat_decomp.h` | QR and SVD decompositions with truncation (reltol + max bond dim), dispatched to LAPACK BDCSVD for standard types and JacobiSVD for extended‑precision |
-| `matrix.h` | Thin wrapper pulling Eigen into the project |
+| `TensorQuadOperation/tt_base.h` | `TT<T>` — generic Tensor Train: canonicalisation, addition, scalar ops, conjugation, evaluation, save/load |
+| `TensorQuadOperation/mps_base.h` | `MPS<T>` — Matrix Product State (phys = 2): `dot`, `norm2`, convolution, translation, promotion from `TT` |
+| `TensorQuadOperation/mpo_base.h` | `MPO<T>` — Matrix Product Operator (phys = 4): `from_mps`, `diag`, `transpose`, `_mul` (apply to MPS) |
+| `TensorQuadOperation/ttn_base.hpp` | `TTN<T>` — tree tensor networks, canonicalisation, compression, branch operations, and separable-kernel convolution |
+| `TensorQuadOperation/utc.h` | `utc::zip_up_mpo_mps`, `utc::qrsvd_contract_mpo_mps`, `utc::optimize_dm_generic` — contraction kernels |
+| `TensorQuadOperation/mat_decomp.h` | QR and SVD decompositions with truncation (reltol + max bond dim), dispatched to LAPACK BDCSVD for standard types and JacobiSVD for extended‑precision |
+| `TensorQuadOperation/matrix.h` | Thin wrapper pulling Eigen into the project |
+| `TensorQuadOperation/magic_tensor.hpp` | Binary addition tensors and convolution operators |
+| `TensorQuadOperation/generic_construction.hpp` | Analytic MPS construction in `analytic_mps_construction` |
+| `QuanticsIntegration/quantics_integrator.hpp` | `QuanticsIntegrator1D<Scalar, Sint>` and its `QUANTICS_INT_1D` alias — 1D fitting and integration |
+| `QuanticsIntegration/quantics_integrator_kD.hpp` | `QuanticsIntegrator_kD<Scalar, Sint>` — multidimensional tree fitting and integration |
+| `QuanticsIntegration/indefinite_integral.hpp` | Heaviside MPOs and grid-aware indefinite-integration helpers |
 
 ---
 
@@ -69,7 +94,9 @@ All 7 test executables run in parallel; their output is saved to `test/test_*.tx
 ### Construction
 
 ```cpp
-#include "mps_base.h"
+#include "TensorQuadOperation/mps_base.h"
+
+using TensorQuadOperation::MPS;
 
 // Build from a vector of shared Tensor3D cores
 std::vector<xfac_quad::Tensor3D<std::complex<double>>> cores = { /* ... */ };
@@ -132,7 +159,10 @@ MPS<T> reloaded("my_state.tt");
 ### Construction from an MPS (diagonal operator)
 
 ```cpp
-#include "mpo_base.h"
+#include "TensorQuadOperation/mpo_base.h"
+
+using TensorQuadOperation::MPS;
+using TensorQuadOperation::MPO;
 
 MPS<std::complex<double>> psi("state.tt");
 MPO<std::complex<double>> rho = MPO<std::complex<double>>::from_mps(psi);
@@ -178,7 +208,7 @@ The library is fully templated on the scalar type `T`. The following are tested:
 | `std::complex<float128>` | Boost 128‑bit float (quad precision) |
 | `std::complex<dd_128>` | Double‑double (QD library) |
 
-The `mat_decomp.h` SVD dispatches to **LAPACK BDCSVD** for `float`/`double`/`complex<float>`/`complex<double>` (3–10× faster) and falls back to **Eigen JacobiSVD** for extended‑precision types.
+The `TensorQuadOperation/mat_decomp.h` SVD dispatches to **LAPACK BDCSVD** for `float`/`double`/`complex<float>`/`complex<double>` (3–10× faster) and falls back to **Eigen JacobiSVD** for extended‑precision types.
 
 ---
 
@@ -206,13 +236,21 @@ bash run_test.sh
 
 ```
 TensorQuadOperation/
-├── include/              # Public headers
-│   ├── matrix.h          # Eigen include wrapper
-│   ├── tt_base.h         # TT<T> base class
-│   ├── mps_base.h        # MPS<T>
-│   ├── mpo_base.h        # MPO<T>
-│   ├── utc.h             # Contraction kernels
-│   └── mat_decomp.h      # QR + SVD with truncation
+├── include/                         # Public include root
+│   ├── TensorQuadOperation/         # TensorQuadOperation namespace
+│   │   ├── matrix.h
+│   │   ├── mat_decomp.h
+│   │   ├── tt_base.h
+│   │   ├── mps_base.h
+│   │   ├── mpo_base.h
+│   │   ├── ttn_base.hpp
+│   │   ├── utc.h
+│   │   ├── magic_tensor.hpp
+│   │   └── generic_construction.hpp
+│   └── QuanticsIntegration/         # QuanticsIntegration namespace
+│       ├── quantics_integrator.hpp
+│       ├── quantics_integrator_kD.hpp
+│       └── indefinite_integral.hpp
 ├── test/                 # Test sources + output
 │   ├── test.cpp
 │   ├── test_Tensor3D.cpp

@@ -1,14 +1,16 @@
 #pragma once
 
-#include "tt_base.h"
-#include "mps_base.h"
-#include "mpo_base.h"
-#include "utc.h"
+#include "TensorQuadOperation/tt_base.h"
+#include "TensorQuadOperation/mps_base.h"
+#include "TensorQuadOperation/mpo_base.h"
+#include "TensorQuadOperation/utc.h"
 
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
+namespace TensorQuadOperation {
 
 // MPO may still be incomplete when reached through mpo_base.h -> mps_base.h.
 // The dependent template definitions below are instantiated after it is defined.
@@ -121,3 +123,6 @@ MPO<Scalar> reshape_magic_res(const MPS<Scalar>& result)
     }
     return MPO<Scalar>(static_cast<const TT<Scalar>&>(result));
 }
+
+} // namespace TensorQuadOperation
+

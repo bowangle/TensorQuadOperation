@@ -1,7 +1,9 @@
 #pragma once
 
-#include "tt_base.h"
+#include "TensorQuadOperation/tt_base.h"
 #include <type_int128.h>
+
+namespace TensorQuadOperation {
 
 // Helper declarations for the convolution implementation below.
 template<typename T> class MPS;
@@ -181,5 +183,7 @@ public:
     }
 };
 
-#include "magic_tensor.hpp"
-#include "generic_construction.hpp"
+} // namespace TensorQuadOperation
+
+#include "TensorQuadOperation/magic_tensor.hpp"
+#include "TensorQuadOperation/generic_construction.hpp"

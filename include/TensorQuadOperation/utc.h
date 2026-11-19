@@ -1,7 +1,7 @@
 #pragma once
 
 #include <xfac_quad/cubemat_helper.h>
-#include "mat_decomp.h"   // SVDDecomp
+#include "TensorQuadOperation/mat_decomp.h"   // SVDDecomp
 
 #include <algorithm>
 #include <stdexcept>
@@ -14,7 +14,7 @@
 //              optimize_dm_generic (with 1-site and 2-site sweeps).
 // TODO:        zip_up_mpo_mpo (stub, throws at runtime).
 // =====================================================================
-namespace utc {
+namespace TensorQuadOperation::utc {
 
 using xfac_quad::Tensor3D;
 
@@ -814,4 +814,4 @@ std::vector<Tensor3D<T>> zip_up_mpo_mpo(
     throw std::logic_error("TODO: utc::zip_up_mpo_mpo not implemented");
 }
 
-} // namespace utc
+} // namespace TensorQuadOperation::utc

@@ -1,8 +1,8 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include "type_int128.h"
-#include "mps_base.h"
-#include "mpo_base.h"
+#include "TensorQuadOperation/mps_base.h"
+#include "TensorQuadOperation/mpo_base.h"
 
 #include <xfac_quad_runner/xf-qd-runner.hpp>
 
@@ -14,6 +14,10 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+
+using TensorQuadOperation::MPO;
+using TensorQuadOperation::MPS;
+using TensorQuadOperation::TT;
 
 // ============================================================
 // Timer

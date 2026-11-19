@@ -1,7 +1,7 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 
-#include "generic_construction.hpp"
+#include "TensorQuadOperation/generic_construction.hpp"
 #include <type_double_double.h>
 #include <type_float128_boost.h>
 
@@ -11,6 +11,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+using TensorQuadOperation::MPS;
+namespace analytic_mps_construction = TensorQuadOperation::analytic_mps_construction;
 
 namespace analytic_mps_construction_tests {
 

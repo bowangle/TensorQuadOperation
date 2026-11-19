@@ -1,12 +1,14 @@
 #pragma once
 
-#include "tt_base.h"
-#include "mps_base.h"
-#include "utc.h"
+#include "TensorQuadOperation/tt_base.h"
+#include "TensorQuadOperation/mps_base.h"
+#include "TensorQuadOperation/utc.h"
 
 #include <algorithm>
 #include <string>
 #include <type_traits>
+
+namespace TensorQuadOperation {
 
 // Matrix Product Operator: a TT whose physical leg is the fused
 // (row x column) operator index — n_phys = 4 for qubits, i.e. cores
@@ -265,3 +267,5 @@ public:
     //     return res;
     // }
 };
+
+} // namespace TensorQuadOperation

@@ -1,7 +1,7 @@
 #pragma once
-#include "ttn_base.hpp"
-#include "quantics_integrator.hpp"
-#include "generic_construction.hpp"
+#include "TensorQuadOperation/ttn_base.hpp"
+#include "QuanticsIntegration/quantics_integrator.hpp"
+#include "TensorQuadOperation/generic_construction.hpp"
 #include <type_int128.h>
 #include <xfac_quad_runner/xf-qd-runner.hpp>
 #include <xfac_quad_runner/xf-quad-param.hpp>
@@ -19,6 +19,8 @@
 #include <vector>
 
 
+namespace QuanticsIntegration {
+
 template<typename Scalar, typename Sint = util::i128>
 class QuanticsIntegrator_kD {
 
@@ -26,7 +28,7 @@ public:
 
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using mGrid = qtgrid::MultQTGrid<RealScalar, Sint>;
-    using mState = TTN<Scalar>;
+    using mState = TensorQuadOperation::TTN<Scalar>;
 
     /// Half-open rectangular grid-index range: [begin[i], end[i]) in variable i.
     struct IndexRange {
@@ -175,7 +177,7 @@ public:
     {
         validate_grid(grid);
         const auto dimensions = static_cast<std::size_t>(grid.get_dim());
-        std::vector<MPS<Scalar>> kernels;
+        std::vector<TensorQuadOperation::MPS<Scalar>> kernels;
         std::vector<RealScalar> kernel_a, kernel_b;
         kernels.reserve(dimensions);
         kernel_a.reserve(dimensions);
@@ -183,7 +185,7 @@ public:
         for (std::size_t i = 0; i < dimensions; ++i) {
             const RealScalar length = grid.get_b()[i] - grid.get_a()[i];
             auto [kernel, lag_grid] =
-                analytic_mps_construction::make_exclusive_heaviside_mps<Scalar, Sint>(
+                TensorQuadOperation::analytic_mps_construction::make_exclusive_heaviside_mps<Scalar, Sint>(
                     length, grid.get_nBits()[i]);
             kernels.push_back(std::move(kernel));
             kernel_a.push_back(lag_grid.get_a());
@@ -205,7 +207,7 @@ public:
     static mState make_indefinite_integrator_conv(
         const mState& values,
         const mGrid& grid,
-        const std::vector<MPS<Scalar>>& kernels,
+        const std::vector<TensorQuadOperation::MPS<Scalar>>& kernels,
         const mGrid& kernel_grid,
         const std::string& save_prefix,
         int max_bond_dim = 0,
@@ -305,7 +307,7 @@ private:
     static std::pair<mState, mGrid> make_indefinite_integral_conv(
         const mState& values,
         const mGrid& value_grid,
-        const std::vector<MPS<Scalar>>& kernels,
+        const std::vector<TensorQuadOperation::MPS<Scalar>>& kernels,
         const mGrid& kernel_grid,
         int max_bond_dim = 0,
         RealScalar reltol = RealScalar(-1),
@@ -506,3 +508,6 @@ private:
     mGrid grid_;
     mState values_;
 };
+
+} // namespace QuanticsIntegration
+

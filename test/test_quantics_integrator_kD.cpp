@@ -19,7 +19,10 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 
-#include "quantics_integrator_kD.hpp"
+#include "QuanticsIntegration/quantics_integrator_kD.hpp"
+
+using TensorQuadOperation::TTN;
+using QuanticsIntegration::QuanticsIntegrator_kD;
 
 namespace {
 

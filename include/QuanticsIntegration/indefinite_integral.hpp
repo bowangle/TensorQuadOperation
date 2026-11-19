@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mpo_base.h"
+#include "TensorQuadOperation/mpo_base.h"
 
 #include <cstddef>
 #include <map>
@@ -8,6 +8,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace QuanticsIntegration {
 
 /// Construct one core of the Heaviside MPO H(n,m) = Theta(n-m).
 /// The exact MPO has TT/MPO bond rank chi = 2. `c_left` and `c_right`
@@ -91,7 +93,7 @@ xfac_quad::Tensor3D<Scalar> make_heaviside_mpo_core(
 /// and one for an inclusive prefix sum.  The returned cores follow the
 /// least-significant-bit-first ordering used by QuanticsIntegrator1D.
 template<typename Scalar>
-MPO<Scalar> make_heaviside_mpo(int nbits, Scalar diagonal_value = Scalar(0))
+TensorQuadOperation::MPO<Scalar> make_heaviside_mpo(int nbits, Scalar diagonal_value = Scalar(0))
 {
     if (nbits <= 0)
         throw std::invalid_argument("make_heaviside_mpo: nbits must be positive");
@@ -105,7 +107,7 @@ MPO<Scalar> make_heaviside_mpo(int nbits, Scalar diagonal_value = Scalar(0))
         cores.push_back(make_heaviside_mpo_core<Scalar>(c_left, c_right, diagonal_value));
     }
 
-    return MPO<Scalar>(std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1, /*working_site=*/-1);
+    return TensorQuadOperation::MPO<Scalar>(std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1, /*working_site=*/-1);
 }
 
 /// Apply the exclusive-prefix Heaviside MPO to an MPS.
@@ -116,8 +118,8 @@ MPO<Scalar> make_heaviside_mpo(int nbits, Scalar diagonal_value = Scalar(0))
 /// a numerical indefinite integral. `method` selects the MPO-MPS contraction
 /// algorithm and defaults to zip-up.
 template<typename Scalar>
-MPS<Scalar> make_indefinite_integral(
-    const MPS<Scalar>& values,
+TensorQuadOperation::MPS<Scalar> make_indefinite_integral(
+    const TensorQuadOperation::MPS<Scalar>& values,
     int max_chi,
     typename Eigen::NumTraits<Scalar>::Real reltol,
     const std::string& method = "zip-up")
@@ -128,7 +130,7 @@ MPS<Scalar> make_indefinite_integral(
     // MPO::_mul obtains the zip-up truncation parameters from its operands.
     // Keep the exact Heaviside MPO independent of those parameters and attach
     // them to a local copy of the input MPS instead.
-    MPS<Scalar> configured_values(values.get_core(), max_chi, reltol, values.get_w());
+    TensorQuadOperation::MPS<Scalar> configured_values(values.get_core(), max_chi, reltol, values.get_w());
     return heaviside._mul(configured_values, method);
 }
 
@@ -142,10 +144,10 @@ MPS<Scalar> make_indefinite_integral(
 /// Neither input is modified. This is a convolution response, not a general
 /// primitive whose differences evaluate arbitrary weighted subintervals.
 template<typename Scalar, typename ValueGrid, typename KernelGrid>
-std::pair<MPS<Scalar>, ValueGrid> make_indefinite_integral_conv(
-    const MPS<Scalar>& values,
+std::pair<TensorQuadOperation::MPS<Scalar>, ValueGrid> make_indefinite_integral_conv(
+    const TensorQuadOperation::MPS<Scalar>& values,
     const ValueGrid& value_grid,
-    const MPS<Scalar>& kernel,
+    const TensorQuadOperation::MPS<Scalar>& kernel,
     const KernelGrid& kernel_grid,
     int max_chi = 0,
     typename Eigen::NumTraits<Scalar>::Real reltol =
@@ -187,7 +189,7 @@ std::pair<MPS<Scalar>, ValueGrid> make_indefinite_integral_conv(
     }
 
     // Step 3: conv is non-const, so call it on a copy and scale once by dt.
-    MPS<Scalar> signal(values);
+    TensorQuadOperation::MPS<Scalar> signal(values);
     auto out = signal.conv(kernel, max_chi, reltol, final_compress);
     out *= Scalar(value_grid.get_dx());
 
@@ -199,7 +201,7 @@ std::pair<MPS<Scalar>, ValueGrid> make_indefinite_integral_conv(
 /// F(x_max) - F(x_min).
 template<typename Scalar, typename Grid>
 Scalar integrate_indefinite_method(
-    const MPS<Scalar>& indefinite_values,
+    const TensorQuadOperation::MPS<Scalar>& indefinite_values,
     const Grid& grid,
     const typename Grid::scalar_type& x_min,
     const typename Grid::scalar_type& x_max)
@@ -216,7 +218,7 @@ Scalar integrate_indefinite_method(
 /// F(x_max[i]) - F(x_min[i]), and input order is preserved.
 template<typename Scalar, typename Grid>
 std::vector<Scalar> integrate_indefinite_method(
-    const MPS<Scalar>& indefinite_values,
+    const TensorQuadOperation::MPS<Scalar>& indefinite_values,
     const Grid& grid,
     const std::vector<typename Grid::scalar_type>& x_min,
     const std::vector<typename Grid::scalar_type>& x_max)
@@ -246,4 +248,5 @@ std::vector<Scalar> integrate_indefinite_method(
     return results;
 }
 
+} // namespace QuanticsIntegration
 

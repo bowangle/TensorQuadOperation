@@ -1,10 +1,12 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 
-#include "indefinite_integral.hpp"
+#include "QuanticsIntegration/indefinite_integral.hpp"
 
 #include <cstddef>
 #include <vector>
+
+using QuanticsIntegration::make_heaviside_mpo;
 
 TEST_CASE("4-bit Heaviside MPO represents Theta(n-m) on the full grid",
           "[indefinite-integral][mpo]")

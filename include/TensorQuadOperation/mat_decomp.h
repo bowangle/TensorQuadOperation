@@ -7,6 +7,8 @@
 #include <boost/multiprecision/float128.hpp>
 #include <complex>
 
+namespace TensorQuadOperation {
+
 // -------------------------------------------------------------------
 // Type trait: does T benefit from LAPACK-backed Eigen decompositions?
 // (float, double, complex<float>, complex<double> are the standard
@@ -137,3 +139,6 @@ template<class T>
 struct MatSVDFixedTol : public MatDecompFixedTol<SVDDecomp<T>> {
     using MatDecompFixedTol<SVDDecomp<T>>::MatDecompFixedTol;
 };
+
+} // namespace TensorQuadOperation
+

@@ -1,7 +1,7 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include "type_int128.h"
-#include "ttn_base.hpp"
+#include "TensorQuadOperation/ttn_base.hpp"
 
 #include <QTgrid-quad/grid.h>
 #include <xfac_quad/tree/tensor_tree_ci.hpp>
@@ -20,6 +20,10 @@
 #include <set>
 #include <sstream>
 #include <type_traits>
+
+using TensorQuadOperation::MPO;
+using TensorQuadOperation::MPS;
+using TensorQuadOperation::TTN;
 
 namespace {
 

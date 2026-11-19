@@ -10,7 +10,9 @@
 #include <vector>      // for std::vector (VecTT)
 #include <algorithm>   // for std::copy
 #include <xfac_quad/cubemat_helper.h>
-#include "mat_decomp.h"
+#include "TensorQuadOperation/mat_decomp.h"
+
+namespace TensorQuadOperation {
 
 template<typename T>
 class TT{
@@ -519,4 +521,6 @@ class TT{
     }
 
 };
+
+} // namespace TensorQuadOperation
 

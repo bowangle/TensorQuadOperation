@@ -20,7 +20,11 @@
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
 
-#include "quantics_integrator.hpp"
+#include "QuanticsIntegration/quantics_integrator.hpp"
+
+using TensorQuadOperation::MPS;
+using QuanticsIntegration::make_indefinite_integral;
+using QuanticsIntegration::QuanticsIntegrator1D;
 
 namespace {
 

@@ -1,10 +1,12 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
-#include "tt_base.h"
+#include "TensorQuadOperation/tt_base.h"
 #include <iostream>
 #include <string>
 #include <chrono>
 #include <cmath>
+
+using TensorQuadOperation::TT;
 
 // ============================================================
 // Timer
