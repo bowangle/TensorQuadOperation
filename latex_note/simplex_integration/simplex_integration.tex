@@ -1,0 +1,380 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.3cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage[hidelinks]{hyperref}
+
+\title{Simplex integration by recursive convolution}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+
+We start from a hypercube integral, restrict it to an ordered simplex
+using permutation symmetry, and reduce the simplex integral to successive
+one-dimensional convolutions. Physical prefactors, such as powers of the
+interaction or factors of $i$, are omitted; the combinatorial factor
+$1/n!$ is kept explicitly until the change of domain.
+
+\section{Original integration on the hypercube}
+
+Start from the integrand $\widetilde Q_n(u_1,\ldots,u_n)$ and the
+normalized integral
+\begin{equation}
+    \boxed{Q_n(t)=\frac{1}{n!}
+    \int_{\mathcal H_t}du_1\cdots du_n\,
+    \left[\prod_{k=1}^n\lambda(u_k)\right]
+    \widetilde Q_n(u_1,\ldots,u_n),
+    \qquad \mathcal H_t=[0,t]^n.}
+    \label{eq:hypercube_integral}
+\end{equation}
+All variables are integrated independently over the same interval.
+The function $\lambda$ describes the switching on of the interaction;
+$\lambda=1$ on the interval gives the unweighted case.
+For identical interaction vertices, relabelling the vertices does not
+change the complete time-ordered diagrammatic expression, with its
+fermionic signs already included. After summing any associated internal
+labels, this gives permutation symmetry in the integration times.
+We use this property of the full integrand:
+\begin{equation}
+    \widetilde Q_n(u_{\pi(1)},\ldots,u_{\pi(n)})
+    =\widetilde Q_n(u_1,\ldots,u_n)
+    \qquad\text{for every permutation }\pi.
+    \label{eq:symmetry}
+\end{equation}
+The activation product is also permutation symmetric, so the complete
+weighted integrand has this property.
+
+\paragraph{Why not factorize directly on the original hypercube?}
+Permutation symmetry does not imply smoothness or a low-rank tensor
+representation. Time-ordered propagators contain Heaviside factors such
+as $\theta(u_i-u_j)$, and the resulting integrand can have cusps when two
+interaction times coincide. The hyperplanes $u_i=u_j$ separate the
+hypercube into $n!$ ordering sectors. A direct tensor approximation in
+the $u_k$ coordinates must resolve these internal ordering boundaries,
+which can require large ranks even when the function is simpler within
+each sector.
+
+The purpose of the following change of variables is therefore not merely
+to replace one integration domain by another. We first select one
+ordering sector using symmetry, then express the integrand in successive
+time gaps. Coincident adjacent times become boundaries at zero gap,
+rather than diagonal boundaries inside the domain. This motivates
+learning the integrand in gap coordinates instead of the original time
+coordinates. The gap-coordinate function may be approximated on a
+hypercube, while the physical simplex constraint is imposed during
+integration; it is not inserted as a discontinuous mask into the function
+to be factorized.
+
+\section{Passage from the hypercube to the simplex}
+
+Define the ordered simplex
+\begin{equation}
+    \mathcal S_u(t)=\{(u_1,\ldots,u_n):
+        0\leq u_n\leq\cdots\leq u_1\leq t\}.
+    \label{eq:ordered_simplex}
+\end{equation}
+The hypercube splits into $n!$ ordering sectors, one for each permutation
+of the variables. Their interiors are disjoint, and their common
+boundaries $u_i=u_j$ have zero measure for an ordinary integrable function.
+By symmetry, each sector has the same integral. The hypercube integral
+is therefore $n!$ times the integral over $\mathcal S_u(t)$, cancelling
+the original factor $1/n!$:
+\begin{equation}
+    \boxed{\begin{aligned}
+    Q_n(t)&=\int_{\mathcal S_u(t)}du_1\cdots du_n\,
+        \left[\prod_{k=1}^n\lambda(u_k)\right]
+        \widetilde Q_n(u_1,\ldots,u_n)\\
+    &=\int_0^t du_1\int_0^{u_1}du_2\cdots
+      \int_0^{u_{n-1}}du_n\,
+      \left[\prod_{k=1}^n\lambda(u_k)\right]
+      \widetilde Q_n(u_1,\ldots,u_n).
+    \end{aligned}}
+    \label{eq:ordered_integral}
+\end{equation}
+No additional division by $n!$ is needed after this step.
+If the starting hypercube integral has no $1/n!$ prefactor, its simplex
+expression instead retains an overall factor $n!$. Without permutation
+symmetry, the different ordering sectors must be summed explicitly.
+For a common interval $[a,b]$, the same construction applies after
+shifting $u_k=a+s_k$, setting $t=b-a$, and replacing $\lambda(s)$
+by $\lambda(a+s)$.
+
+\paragraph{Successive time gaps.}
+Introduce the successive time gaps
+\begin{equation}
+    v_1=t-u_1,\qquad v_k=u_{k-1}-u_k\quad(k\geq2),
+    \qquad u_k=t-\sum_{j=1}^k v_j.
+    \label{eq:gaps}
+\end{equation}
+The absolute Jacobian is one. The ordered simplex becomes
+\begin{equation}
+    \mathcal S_v(t)=\left\{(v_1,\ldots,v_n):
+        v_k\geq0,\quad\sum_{k=1}^n v_k\leq t\right\}.
+    \label{eq:gap_simplex}
+\end{equation}
+For the chosen upper limit $t$, define the integrand in gap coordinates by
+\begin{equation}
+    f_n(v_1,\ldots,v_n)=
+    \widetilde Q_n\left(t-v_1,\ t-v_1-v_2,\ \ldots,
+                       t-\sum_{j=1}^n v_j\right).
+    \label{eq:gap_integrand}
+\end{equation}
+The same integral can then be written
+\begin{equation}
+    Q_n(t)=\int_{\mathcal S_v(t)}dv_1\cdots dv_n\,
+      \left[\prod_{k=1}^n
+      \lambda\left(t-\sum_{j=1}^k v_j\right)\right]
+      f_n(v_1,\ldots,v_n).
+    \label{eq:gap_integral}
+\end{equation}
+The two domains are the same simplex in different coordinates.
+Adjacent coincident times $u_{k-1}=u_k$ become boundary faces $v_k=0$;
+the ordering boundaries no longer cut through the interior of the domain.
+In the ascending delay convention $w_k=t-u_k$, one instead has
+$0\leq w_1\leq\cdots\leq w_n\leq t$, with
+$v_1=w_1$ and $v_k=w_k-w_{k-1}$.
+Thus, a function of the individual delays is evaluated in gap coordinates
+at $(w_1,\ldots,w_n)=(v_1,v_1+v_2,\ldots,\sum_jv_j)$.
+
+\section{Tensor-train reduction to one-dimensional integrals}
+
+To obtain the full time dependence from one construction, assume that
+the gap-coordinate integrand admits a common tensor-train approximation
+throughout the time window $0\leq t\leq T_M$, with fixed kernels and
+pivot matrices:
+\begin{equation}
+    f_n(v_1,\ldots,v_n)
+    \simeq T_1(v_1)P_1^{-1}T_2(v_2)\cdots
+           P_{n-1}^{-1}T_n(v_n).
+    \label{eq:tt}
+\end{equation}
+Here $T_k(v)$ is an $r_{k-1}\times r_k$ matrix, $r_0=r_n=1$,
+and $P_k$ is an invertible $r_k\times r_k$ cross-interpolation pivot
+matrix. These are ordinary matrix products, without conjugation.
+The pivot inverses may be absorbed into the kernels by defining
+\begin{equation}
+    A_k(v)=T_k(v)P_k^{-1}\quad(k<n),\qquad A_n(v)=T_n(v).
+\end{equation}
+
+Integrate the innermost variable $u_n$ first, then $u_{n-1}$, and so on.
+For $k<n$, the recursion is
+\begin{equation}
+    \boxed{\begin{aligned}
+        \Psi_k(x)&=\int_0^x dy\,
+            \lambda(y)T_k(x-y)P_k^{-1}\Psi_{k+1}(y),
+            &&k=n-1,\ldots,1,\\
+        \widehat Q_n(t)&=\Psi_1(t)\simeq Q_n(t).
+    \end{aligned}}
+    \label{eq:recursion}
+\end{equation}
+The vector $\Psi_k(x)$ has $r_{k-1}$ components; the last result
+$\Psi_1(t)$ is a scalar. In particular,
+\begin{equation}
+    \Psi_n(x)=\int_0^xdy\,\lambda(y)T_n(x-y).
+\end{equation}
+To derive the recursion, observe that $u_n$ occurs only in
+$\lambda(u_n)T_n(u_{n-1}-u_n)$. Integrating this factor over
+$0\leq u_n\leq u_{n-1}$ gives $\Psi_n(u_{n-1})$.
+Now suppose that eliminating $u_{k+1},\ldots,u_n$ has produced
+$\Psi_{k+1}(u_k)$. The remaining factor involving $u_k$ is
+\begin{equation*}
+    \lambda(u_k)T_k(u_{k-1}-u_k)P_k^{-1}\Psi_{k+1}(u_k).
+\end{equation*}
+Its integral over $0\leq u_k\leq u_{k-1}$ is precisely
+$\Psi_k(u_{k-1})$. Repeating this step reaches $u_0=t$ and leaves
+$\Psi_1(t)$, proving the reduction while preserving the matrix order.
+
+With the causal matrix--vector convolution
+\begin{equation}
+    (A*B)(x)=\int_0^xdy\,A(x-y)B(y),
+\end{equation}
+each step is simply $\Psi_k=A_k*(\lambda\Psi_{k+1})$,
+with $\Psi_{n+1}(x)=1$ for the base case.
+The activation multiplies the current vector \emph{pointwise before each
+convolution}; it is not applied only once at the end.
+For example, at order two,
+\begin{equation}
+    \widehat Q_2(t)=\int_0^tdu_1\int_0^{u_1}du_2\,
+       \lambda(u_1)\lambda(u_2)
+       T_1(t-u_1)P_1^{-1}T_2(u_1-u_2).
+\end{equation}
+
+\paragraph{Final integration and the complete time dependence.}
+For $n\geq2$, the last remaining integration is
+\begin{equation}
+    \boxed{\widehat Q_n(t)=
+    \int_0^tdu_1\,\lambda(u_1)T_1(t-u_1)P_1^{-1}\Psi_2(u_1)
+    =\Psi_1(t).}
+    \label{eq:correct_final}
+\end{equation}
+The important point is that each $\Psi_k$ is constructed as a
+\emph{function} on $[0,T_M]$, not as a scalar for one chosen observation
+time. Once $\Psi_2$ has been constructed, the last convolution constructs
+$\Psi_1$ over the entire time window. Consequently,
+\begin{equation}
+    \boxed{\widehat Q_n(t)=\Psi_1(t)
+        \qquad\text{for every }0\leq t\leq T_M.}
+\end{equation}
+The full time dependence is thus obtained in the same final
+function-construction step: no new integrand fit and no repetition of
+the preceding integrations are required for each time point. Changing
+$t$ only requires evaluating the resulting function. This is the key
+advantage over calculating a separate multidimensional integral at each
+observation time. The construction cost still depends on the chosen
+resolution and ranks; explicitly exporting many values also has an
+output cost.
+
+This reuse requires the common gap-coordinate representation assumed
+above. For a generic starting integrand, changing coordinates alone does
+not guarantee kernels independent of the chosen upper limit.
+For $n=1$, the base convolution already constructs the whole output
+function, with no pivot matrix.
+
+\section{How to perform the integration with quantics}
+
+\subsection{Binary grid and the two kinds of tensor indices}
+
+Choose a common grid for the gaps and the intermediate time variable:
+\begin{equation}
+    N=2^B,\qquad h=\frac{T_M}{N},\qquad x_m=mh,
+    \qquad m=\sum_{\ell=0}^{B-1}2^\ell b_\ell,
+    \quad b_\ell\in\{0,1\}.
+\end{equation}
+The stored indices are $m=0,\ldots,N-1$. Quantics replaces each sampled
+one-dimensional function by an MPS with $B$ binary physical indices,
+ordered here from the least to the most significant bit. In particular,
+represent the arrays
+\begin{equation}
+    \Lambda[m]=\lambda(mh),\qquad
+    \mathsf T^{(k)}_{ab}[q]=\bigl(T_k(qh)\bigr)_{ab},
+    \qquad \Psi_{k,a}[m]\simeq\bigl(\Psi_k(mh)\bigr)_a
+\end{equation}
+as scalar MPSs, one for each component. The indices $a,b$ are the
+\emph{variable-level} train indices of Section~3; they are not binary
+physical indices or quantics bond indices. This componentwise construction
+is one direct way to retain the matrix structure of the original train
+without constructing dense arrays of length $N$.
+
+\subsection{The recursion becomes MPS products, sums, and convolutions}
+
+Use the raw, nonperiodic discrete convolution
+\begin{equation}
+    \operatorname{conv}(A,D)[m]=\sum_{q=0}^m A[q]D[m-q],
+    \label{eq:raw_quantics_conv}
+\end{equation}
+which contains no factor $h$. To choose a definite quadrature, take the
+left-rectangle rule in the integration variable $y$ of Section~3.
+It uses $y=0,h,\ldots,(m-1)h$, or equivalently positive lag indices
+$q=m-y/h=1,\ldots,m$. Thus define kernels with their zero-lag entry removed:
+\begin{equation}
+    \mathsf K^{(k)}_{ab}[q]=(1-\delta_{q,0})\mathsf T^{(k)}_{ab}[q].
+    \label{eq:positive_lag_kernel}
+\end{equation}
+In MPS form this can be done by subtracting
+$\mathsf T^{(k)}_{ab}[0]\,\delta_{q,0}$; the delta at the all-zero bit
+string is a bond-dimension-one MPS. This removes a quadrature endpoint,
+not the value of the original continuous kernel.
+
+Starting at $k=n$ and proceeding downwards, the discrete recursion is
+\begin{equation}
+    \boxed{\begin{aligned}
+    \Psi_{n,a}
+        &\simeq h\,\operatorname{conv}(\mathsf K^{(n)}_{a1},\Lambda),\\
+    D_{k,b}
+        &=\Lambda\odot\sum_{c=1}^{r_k}(P_k^{-1})_{bc}\Psi_{k+1,c},
+        &&k<n,\\
+    \Psi_{k,a}
+        &\simeq h\sum_{b=1}^{r_k}
+            \operatorname{conv}(\mathsf K^{(k)}_{ab},D_{k,b}),
+        &&k<n.
+    \end{aligned}}
+    \label{eq:quantics_recursion}
+\end{equation}
+Here $\odot$ denotes the pointwise product of two MPSs representing
+functions on the same grid. Mixing by $P_k^{-1}$ uses scalar multiples
+and sums of component MPSs. Each convolution is a scalar MPS convolution;
+the component sums restore the matrix--vector contraction.
+Truncation may be applied after these operations to control the quantics
+bond dimensions. No complex conjugation is involved.
+
+Each recursion level contributes one factor $h$, so the final result
+contains $h^n$ already. Evaluate the scalar MPS $\Psi_{1,1}$ at the bits
+of $m$ to obtain the approximation to $Q_n(mh)$; do not multiply by a
+second volume factor or divide by $n!$ again. The point $T_M$ itself is
+not stored, so evaluating there requires an endpoint convention rather
+than silently interpreting $m=N-1$ as $m=N$.
+
+\subsection{What this means for a TTN fitted directly in the gaps}
+
+The componentwise procedure above assumes the variable-level train
+$T_1P_1^{-1}\cdots T_n$. A general TTN does not directly provide these
+matrix kernels. One possibility is to convert it to such an ordered train,
+but the variable-level ranks can grow. An alternative is to keep the TTN
+and attach quantics arithmetic constraints to its branches.
+
+To see precisely which constraints are required, let $j_k$ index the
+$k$th gap and introduce a remaining-time index after each gap:
+\begin{equation}
+    s_0=m,\qquad s_k=s_{k-1}-j_k,
+    \qquad u_k=hs_k.
+\end{equation}
+For the same left-rectangle convention, $j_k\geq1$ and $s_k\geq0$.
+The discrete simplex integral is therefore
+\begin{equation}
+    \boxed{\widehat Q_n[m]\simeq h^n
+    \sum_{j_1,\ldots,j_n=1}^{N-1}
+    \sum_{s_1,\ldots,s_n=0}^{N-1}
+    f_n[j_1,\ldots,j_n]
+    \prod_{k=1}^n\Lambda[s_k]\,
+        \delta_{s_{k-1},\,j_k+s_k},\qquad s_0=m.}
+    \label{eq:quantics_ttn_simplex}
+\end{equation}
+The deltas enforce $\sum_kj_k\leq m$ and all intermediate ordered times.
+For $\Lambda=1$, they impose only the simplex geometry; otherwise they
+also supply the correct activation factors at the partial remaining times.
+The sums in this formula specify a tensor-network contraction, not dense
+loops over the $N$ possible values of each index.
+
+Each delta is a binary addition tensor. At bit $\ell$ its local constraint is
+\begin{equation}
+    j_{k,\ell}+s_{k,\ell}+c_{k,\ell}
+       =s_{k-1,\ell}+2c_{k,\ell+1},
+    \qquad c_{k,0}=c_{k,B}=0,
+\end{equation}
+with carries $c_{k,\ell}\in\{0,1\}$. Zero boundary carries exclude
+negative remaining times and overflow. Attach these addition tensors and
+the MPSs for $\Lambda$ to the gap TTN, fix the bits of $s_0=m$, and
+contract the other physical and virtual indices. Leaving $s_0$ open
+instead defines a quantics output function, whose compression is a further
+numerical task.
+
+These constraints connect different branches through the remaining-time
+indices. They are therefore \emph{not} the independent branch convolutions
+used for rectangular integration: the augmented network is not generally
+the original tree, and its contraction and compression need a separate
+algorithm. Equation~\eqref{eq:quantics_ttn_simplex} describes that
+construction; it is not an already implemented TTN operation.
+If the saved TTN uses individual delays rather than gaps, the coordinate
+transformation of Section~2 must also be accounted for; relabelling the
+branches alone is not a change of variables.
+
+\begin{thebibliography}{9}
+\bibitem{ttd}
+Y.~N\'u\~nez-Fern\'andez et al.,
+\emph{Learning Feynman Diagrams with Tensor Trains},
+\href{https://arxiv.org/abs/2207.06135v2}{arXiv:2207.06135v2} (2022),
+Sec.~V.A and Appendix G, Eqs.~(G1)--(G7);
+see also Eqs.~(53)--(55).
+
+\bibitem{jeannin}
+M.~Jeannin,
+\emph{Exact numerical calculation of Feynman diagrams for
+out-of-equilibrium Kondo physics using Tensor Cross-Interpolation},
+PhD thesis, Universit\'e Grenoble Alpes (2024),
+Sec.~5.1.2, pp.~78--80, Eqs.~(5.10)--(5.17).
+\end{thebibliography}
+
+\end{document}
