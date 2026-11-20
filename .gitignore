@@ -8,4 +8,4 @@ ccache-*/
 *.tar.xz
 
 # ignore test output
-test/test_*.txt
+test/**/test_*.txt

@@ -46,7 +46,7 @@ Runs CMake (Release, `-march=native`) and builds every test target into `build/`
 bash run_test.sh
 ```
 
-The configured test executables run in parallel; their output is saved to `test/test_*.txt`.
+The test executables run in parallel; their logs are saved beside the grouped sources in `test/TensorQuadOperation/` and `test/QuanticsIntegration/`. The script returns a failure status if any test fails.
 
 ---
 
@@ -214,15 +214,24 @@ The `TensorQuadOperation/mat_decomp.h` SVD dispatches to **LAPACK BDCSVD** for `
 
 ## Test suite
 
-| Test file | What it covers |
+Test sources mirror the two public-header folders. Paths below are relative to `test/`; existing executable and CTest names are unchanged. Both CTest and `run_test.sh` use the project root as the working directory, so shared data stays under `test/output/`.
+
+| Test source | What it covers |
 |---|---|
-| `test_Tensor3D` | `Tensor3D` indexing, slice views, flattening, Armadillo I/O |
-| `test_Mat_QR` | QR decomposition correctness |
-| `test_Mat_SVDDecomp` | SVD decomposition, reltol truncation, max bond dim |
-| `test_tt_base` | `TT` construction, canonicalisation sweeps, arithmetic, conjugation, save/reload |
-| `test_mps` | `MPS` dot product, norm, `_initialize_w`, `shift_w`, `compress_svd`, arithmetic, copy independence |
-| `test_compress_svd` | Compression quality across bond‑dimension sweeps |
-| `test_mpo` | `MPO::from_mps`, `_mul` (zip‑up / qrsvd / optimize), `diag()`, `transpose()`, save/reload |
+| `TensorQuadOperation/test.cpp` | Standalone tensor-file I/O diagnostic (built separately from the script's test suite) |
+| `TensorQuadOperation/test_Tensor3D.cpp` | `Tensor3D` indexing, slice views, flattening, Armadillo I/O |
+| `TensorQuadOperation/test_Mat_QR.cpp` | QR decomposition correctness |
+| `TensorQuadOperation/test_Mat_SVDDecomp.cpp` | SVD decomposition, reltol truncation, max bond dim |
+| `TensorQuadOperation/test_tt_base.cpp` | `TT` construction, canonicalisation sweeps, arithmetic, conjugation, save/reload |
+| `TensorQuadOperation/test_mps.cpp` | MPS operations, arithmetic, and copy independence |
+| `TensorQuadOperation/test_compress_svd.cpp` | Compression quality across bond‑dimension sweeps |
+| `TensorQuadOperation/test_mpo.cpp` | MPO construction, multiplication, diagonal extraction, transpose, and save/reload |
+| `TensorQuadOperation/test_ttn.cpp` | Tree canonicalisation, compression, scaling, and branch operations |
+| `TensorQuadOperation/test_analytics_construction.cpp` | Analytic MPS construction |
+| `TensorQuadOperation/test_convolution.cpp` | MPS convolution and translation |
+| `QuanticsIntegration/test_indefinite_integral.cpp` | Heaviside MPO for exclusive-prefix integration |
+| `QuanticsIntegration/test_quantics_integrator.cpp` | One-dimensional fitting, range sums, and indefinite integration |
+| `QuanticsIntegration/test_quantics_integrator_kD.cpp` | Tree fitting, rectangular integration, and convolution-based integration comparisons |
 
 Run all tests at once:
 
@@ -251,15 +260,24 @@ TensorQuadOperation/
 │       ├── quantics_integrator.hpp
 │       ├── quantics_integrator_kD.hpp
 │       └── indefinite_integral.hpp
-├── test/                 # Test sources + output
-│   ├── test.cpp
-│   ├── test_Tensor3D.cpp
-│   ├── test_Mat_QR.cpp
-│   ├── test_Mat_SVDDecomp.cpp
-│   ├── test_tt_base.cpp
-│   ├── test_mps.cpp
-│   ├── test_compress_svd.cpp
-│   └── test_mpo.cpp
+├── test/
+│   ├── TensorQuadOperation/         # Tensor-operation test sources and logs
+│   │   ├── test.cpp
+│   │   ├── test_Tensor3D.cpp
+│   │   ├── test_Mat_QR.cpp
+│   │   ├── test_Mat_SVDDecomp.cpp
+│   │   ├── test_tt_base.cpp
+│   │   ├── test_mps.cpp
+│   │   ├── test_mpo.cpp
+│   │   ├── test_ttn.cpp
+│   │   ├── test_compress_svd.cpp
+│   │   ├── test_analytics_construction.cpp
+│   │   └── test_convolution.cpp
+│   ├── QuanticsIntegration/         # Integration test sources and logs
+│   │   ├── test_indefinite_integral.cpp
+│   │   ├── test_quantics_integrator.cpp
+│   │   └── test_quantics_integrator_kD.cpp
+│   └── output/                     # Shared generated fixtures (ignored)
 ├── extern/               # External dependencies (xfac_quad and Catch2)
 ├── build/                # CMake build directory
 ├── CMakeLists.txt

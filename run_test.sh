@@ -1,29 +1,60 @@
 #!/bin/bash
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Remove existing test output files (if any)
-rm -f "$SCRIPT_DIR/test/test_Mat_QR.txt" "$SCRIPT_DIR/test/test_Mat_SVDDecomp.txt" "$SCRIPT_DIR/test/test_Tensor3D.txt" "$SCRIPT_DIR/test/test_TT_base.txt" "$SCRIPT_DIR/test/test_mps.txt" "$SCRIPT_DIR/test/test_compress_svd.txt" "$SCRIPT_DIR/test/test_mpo.txt" "$SCRIPT_DIR/test/test_indefinite_integral.txt" "$SCRIPT_DIR/test/test_quantics_integrator.txt" "$SCRIPT_DIR/test/test_quantics_integrator_kD.txt" "$SCRIPT_DIR/test/test_convolution.txt" "$SCRIPT_DIR/test/test_analytics_construction.txt"
-
-rm -f "$SCRIPT_DIR/test/test_ttn.txt"
-
 cd "$SCRIPT_DIR"
 
-# Run tests in parallel and redirect output
-./build/tq_test_test_Mat_QR       > "$SCRIPT_DIR/test/test_Mat_QR.txt"      2>&1 &
-./build/tq_test_test_Mat_SVDDecomp > "$SCRIPT_DIR/test/test_Mat_SVDDecomp.txt" 2>&1 &
-./build/tq_test_test_Tensor3D     > "$SCRIPT_DIR/test/test_Tensor3D.txt"    2>&1 &
-./build/tq_test_test_tt_base      > "$SCRIPT_DIR/test/test_TT_base.txt"     2>&1 &
-./build/tq_test_test_mps          > "$SCRIPT_DIR/test/test_mps.txt"    2>&1 &
-./build/tq_test_test_ttn          > "$SCRIPT_DIR/test/test_ttn.txt"    2>&1 &
-./build/tq_test_test_compress_svd  > "$SCRIPT_DIR/test/test_compress_svd.txt" 2>&1 &
-./build/tq_test_test_mpo          > "$SCRIPT_DIR/test/test_mpo.txt"         2>&1 &
-./build/tq_test_test_indefinite_integral > "$SCRIPT_DIR/test/test_indefinite_integral.txt" 2>&1 &
-./build/tq_test_test_quantics_integrator > "$SCRIPT_DIR/test/test_quantics_integrator.txt" 2>&1 &
-./build/tq_test_test_quantics_integrator_kD > "$SCRIPT_DIR/test/test_quantics_integrator_kD.txt" 2>&1 &
-./build/tq_test_test_convolution > "$SCRIPT_DIR/test/test_convolution.txt" 2>&1 &
-./build/tq_test_test_analytics_construction > "$SCRIPT_DIR/test/test_analytics_construction.txt" 2>&1 &
+tensor_tests=(
+    test_Mat_QR
+    test_Mat_SVDDecomp
+    test_Tensor3D
+    test_tt_base
+    test_mps
+    test_ttn
+    test_compress_svd
+    test_mpo
+    test_convolution
+    test_analytics_construction
+)
+integration_tests=(
+    test_indefinite_integral
+    test_quantics_integrator
+    test_quantics_integrator_kD
+)
 
-# Wait for all background processes to finish
-wait
-echo "All tests done. Output saved to individual files."
+pids=()
+names=()
+run_group() {
+    local group="$1"
+    shift
+    mkdir -p "$SCRIPT_DIR/test/$group"
+    local name log_name
+    for name in "$@"; do
+        log_name="$name"
+        # Preserve the historical filename for the TT base test log.
+        if [[ "$name" == test_tt_base ]]; then
+            log_name=test_TT_base
+        fi
+        # Redirection replaces the previous log without touching shared fixtures.
+        "./build/tq_test_${name}" > "$SCRIPT_DIR/test/$group/$log_name.txt" 2>&1 &
+        pids+=("$!")
+        names+=("$group/$name")
+    done
+}
+
+run_group TensorQuadOperation "${tensor_tests[@]}"
+run_group QuanticsIntegration "${integration_tests[@]}"
+
+# Wait for every child explicitly so a failing test cannot be hidden by bare wait.
+status=0
+for index in "${!pids[@]}"; do
+    if ! wait "${pids[$index]}"; then
+        echo "FAILED: ${names[$index]} (see its log)" >&2
+        status=1
+    fi
+done
+if [[ "$status" == 0 ]]; then
+    echo "All tests completed successfully. Logs are in test/TensorQuadOperation/ and test/QuanticsIntegration/."
+else
+    echo "Some tests failed. Check the logs in the corresponding test subfolders." >&2
+fi
+exit "$status"

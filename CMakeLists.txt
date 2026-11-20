@@ -55,33 +55,34 @@ if(TQ_BUILD_TESTS)
 
     enable_testing()
 
-    # One entry per test/<name>.cpp -> target tq_test_<name>
+    # Paths are relative to test/; keep the existing tq_test_<name> targets.
     set(_tq_tests
-        test
-        test_Tensor3D
-        test_Mat_QR
-        test_Mat_SVDDecomp
-        test_tt_base
-        test_mps
-        test_ttn
-        test_compress_svd
-        test_mpo
-        test_quantics_integrator
-        test_quantics_integrator_kD
-        test_indefinite_integral
-        test_analytics_construction
-        test_convolution)
+        TensorQuadOperation/test
+        TensorQuadOperation/test_Tensor3D
+        TensorQuadOperation/test_Mat_QR
+        TensorQuadOperation/test_Mat_SVDDecomp
+        TensorQuadOperation/test_tt_base
+        TensorQuadOperation/test_mps
+        TensorQuadOperation/test_ttn
+        TensorQuadOperation/test_compress_svd
+        TensorQuadOperation/test_mpo
+        TensorQuadOperation/test_analytics_construction
+        TensorQuadOperation/test_convolution
+        QuanticsIntegration/test_quantics_integrator
+        QuanticsIntegration/test_quantics_integrator_kD
+        QuanticsIntegration/test_indefinite_integral)
 
-    foreach(_name IN LISTS _tq_tests)
-        add_executable(tq_test_${_name} test/${_name}.cpp)
+    foreach(_test IN LISTS _tq_tests)
+        get_filename_component(_name "${_test}" NAME)
+        add_executable(tq_test_${_name} test/${_test}.cpp)
         target_link_libraries(tq_test_${_name}
             PRIVATE tensorquad_deps tensorquad_testing)
         target_compile_options(tq_test_${_name} PRIVATE
             -Wall -Wextra -Wreorder -Wshadow)
         add_test(NAME tq_test_${_name}
                  COMMAND tq_test_${_name})
+        # Shared fixtures and generated data remain relative to the project root.
+        set_tests_properties(tq_test_${_name} PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     endforeach()
-
-    set_tests_properties(tq_test_test_ttn PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
