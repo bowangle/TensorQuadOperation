@@ -28,7 +28,9 @@ public:
 
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using mGrid = qtgrid::MultQTGrid<RealScalar, Sint>;
+    using Grid = qtgrid::QTGrid<RealScalar, Sint>;
     using mState = TensorQuadOperation::TTN<Scalar>;
+    using State = TensorQuadOperation::MPS<Scalar>;
 
     /// Half-open rectangular grid-index range: [begin[i], end[i]) in variable i.
     struct IndexRange {
@@ -294,11 +296,98 @@ public:
     // ======================================================================
     // Simplex Integration:
     // ======================================================================
+    
+    // Some assumption are needed:
+    // The function provided describe: f(v1, v2, ..., vN)
+    // each variable is located on a single branch from left to right.
+    // Each variable are described on the exact same grid ([0, b[, nbit)
+    // Integration domain:
+    //      0 <= u_N <= u_(N-1) <= ... <= u_1 <= t
+    // v1 = t-u1, v2 = u1-u2, ..., vk = u(k-1)-uk, ..., vN = u(N-1)-uN
+    // Q_n(t) = \int_0^t du1 \int_0^{u_1} du_2 ... \int_0^{u_{N-1}} du_N f(v1, v2, ..., vN)
+
+    /// given a mState and mGrid
+    /// verify condition
+    /// perform SimplexIntegration with or without (kernels,kernel_grid) (optional)
+    /// We thus construct an mps with the tree convention.
+    /// convert to MPS and return it with grid (save it with grid if path given)
+    static std::pair<State, Grid> make_integration_simplex(
+        const mState& values,
+        const mGrid& grid,
+        const std::vector<TensorQuadOperation::MPS<Scalar>>& kernels,
+        const mGrid& kernel_grid,
+        const std::string& save_prefix,
+        int max_bond_dim = 0,
+        RealScalar reltol = RealScalar(-1),
+        bool final_compress = true){
+
+            // validation of grids parameter
+
+            // construction substractor MPO object
+
+            // if kernels not given construct the 1 MPS.
+
+            // first branch:
+            //      most left branch: multiply MPS (2 leg dim), MPO(vk=2, uk|uk-1=4)(fuse uk and uk-1 together) -> MPS(leg uk|uk-1)
+            //      rewrite to MPO uk, uk-1
+            //      multiply MPO MPS with: 
+            //      if kernel multiply by kernel_mps
+            //      if no kernel multiply by the mps=1 everywhere.
+            // end with MPS(uk=2)
+
+            
+        }
+
+    /// Evaluate an already constructed simplex-integral MPS at t in [a, b).
+    /// The grid maps t to a stored sample; the MPS already includes quadrature scaling.
+    [[nodiscard]] static Scalar integrate_simplex(
+        const State& simplex_values, const Grid& grid, const RealScalar& t)
+    {
+        validate_simplex_mps(simplex_values, grid);
+        return simplex_values.eval(simplex_sample_id(grid, t));
+    }
+
+    /// Evaluate the same MPS in parallel at several times, preserving input order.
+    [[nodiscard]] static std::vector<Scalar> integrate_simplex(
+        const State& simplex_values, const Grid& grid,
+        const std::vector<RealScalar>& times)
+    {
+        validate_simplex_mps(simplex_values, grid);
+        // Validate and convert every time before eval_list enters its OpenMP loop.
+        std::vector<std::vector<int>> ids;
+        ids.reserve(times.size());
+        for (const auto& t : times)
+            ids.push_back(simplex_sample_id(grid, t));
+        return simplex_values.eval_list(ids);
+    }
 
 private:
     // ======================================================================
     // Helpers
     // ======================================================================
+
+    static void validate_simplex_mps(const State& simplex_values, const Grid& grid)
+    {
+        const auto& cores = simplex_values.get_core();
+        if (cores.empty() || cores.size() != static_cast<std::size_t>(grid.get_nBits()))
+            throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: MPS length must match the positive grid bit count");
+        if (cores.front().n_rows != 1 || cores.back().n_slices != 1)
+            throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: MPS boundary bonds must have dimension one");
+        for (std::size_t site = 0; site < cores.size(); ++site) {
+            const auto& core = cores[site];
+            if (core.n_cols != 2 || core.n_rows <= 0 || core.n_slices <= 0)
+                throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: invalid binary MPS core dimensions");
+            if (site > 0 && cores[site - 1].n_slices != core.n_rows)
+                throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: adjacent MPS bond dimensions differ");
+        }
+    }
+
+    static std::vector<int> simplex_sample_id(const Grid& grid, const RealScalar& t)
+    {
+        if (!(t >= grid.get_a() && t < grid.get_b()))
+            throw std::out_of_range("QuanticsIntegrator_kD::integrate_simplex: t must lie in [a,b)");
+        return grid.coord_to_id(t);
+    }
 
     /// Compute the separable-kernel convolution response and scale once by dV.
     /// Each lag grid must be [0, b_i-a_i), with matching bits and spacing.

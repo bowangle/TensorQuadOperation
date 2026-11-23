@@ -53,7 +53,8 @@
 \titleline{1. Introduction}
 The goal is a single MPS whose open physical legs encode the observation time \(t\).
 The input has four branches for \(v_i=u_{i-1}-u_i\), where \(u_0=t\), and two
-internal tensors \(L^{(8)}\) and \(R^{(9)}\). We take \(\lambda=1\) throughout.
+internal tensors \(L^{(8)}\) and \(R^{(9)}\). Section 2 treats \(\lambda=1\);
+Section 3 adds a weight \(\lambda(u_k)\) for each ordered time.
 
 \par\noindent\begin{minipage}{\linewidth}
 \begin{center}
@@ -593,4 +594,86 @@ encode \(t=h(t_1+2t_2)\); with \(R\) bits there are \(R\) open \(t\) legs.
 This one MPS represents all grid observation times: evaluating it at a
 chosen \(t\) requires no further integration.}
 \end{minipage}\par
+
+\titleline{3. Simplex integral with time weights}
+Keep the same four-gap TPS, but multiply the integrand by one weight
+\(\lambda(u_k)\) for each ordered time:
+\[
+ Q_{4,\lambda}(t)=
+ \int_0^t\!\mathrm{d}u_1\int_0^{u_1}\!\mathrm{d}u_2
+ \int_0^{u_2}\!\mathrm{d}u_3\int_0^{u_3}\!\mathrm{d}u_4\;
+ f(t-u_1,\,u_1-u_2,\,u_2-u_3,\,u_3-u_4)
+ \prod_{k=1}^4\lambda(u_k).
+\]
+The weight depends on the time being integrated, not on its gap or on the
+upper limit. The input TPS and the subtractor are unchanged.
+
+\subhead{3.1\quad Where does the weight go?}
+Start with the innermost integral. In Section 2.2, each value of \(u_4\)
+contributed \(D_d(u_3-u_4)\). Now it contributes
+\[
+ D_d(u_3-u_4)\,\lambda(u_4).
+\]
+For example, when \(u_3=5h\) and \(u_4=2h\), the contribution is
+\(D_d(3h)\lambda(2h)\), before multiplying by the grid spacing \(h\).
+The kernel uses the gap \(3h\); the weight uses the time \(2h\) being summed.
+The same values \(u_4=0,h,\ldots,u_3\) are included as before.
+
+On the grid, write \(\Lambda[m]=\lambda(mh)\) and store these samples in
+one MPS. The way it is used depends on the step:
+\begin{itemize}
+ \item \textbf{At \(u_4\):} the unweighted contraction used the all-ones
+       MPS on the \(u_4\) bits. Use the \(\Lambda\) MPS there instead.
+ \item \textbf{At \(u_3,u_2,u_1\):} the previous contraction has already
+       produced an MPS on the time bits you are about to sum. Multiply its
+       samples by \(\Lambda[m]\) at the same time index \(m\), leaving its
+       tree bond open, then contract as in Section 2.
+\end{itemize}
+For instance, after summing \(u_4\), the result is a function of \(u_3\)
+that already includes \(\lambda(u_4)\) inside its sum. Multiply that result by
+\(\lambda(u_3)\) before summing \(u_3\). This adds the next weight exactly once.
+
+\subhead{3.2\quad Sum over \(u_4\) with weight \(\lambda(u_4)\)}
+In Section 2.2 the integration legs of \(\mathcal D_d[n,m]\) were contracted
+with a vector \((1,1)\) at each site. Replace that product of vectors by the
+MPS for \(\Lambda\). This sums over \(u_4=mh\) and leaves \(u_3=nh\) and
+bond \(d\) open:
+\[
+ \psi_{4,d}^{(h,\lambda)}[n]
+ =h\sum_{m=0}^{n}\mathcal D_d[n,m]\,\Lambda[m].
+\]
+
+\subhead{3.3\quad Sum over \(u_3\) with weight \(\lambda(u_3)\)}
+Form \(C'_c[n,m]\) as in Section 2.3. Weight the incoming message on
+\(u_3=mh\), then sum its time legs and contract \(c,d\) at node \(9\).
+Here \(u_2=nh\) and bond \(s\) remain open:
+\[
+ \psi_{3,s}^{(h,\lambda)}[n]
+ =h\sum_{c,d}R^{(9)}_{scd}\sum_{m=0}^{n}
+ C'_c[n,m]\,\Lambda[m]\,\psi_{4,d}^{(h,\lambda)}[m].
+\]
+
+\subhead{3.4\quad Sum over \(u_2\) with weight \(\lambda(u_2)\)}
+Form \(B'_b[n,m]\) as in Section 2.4. Weight the incoming message on
+\(u_2=mh\), then sum its time legs and contract \(b,s\) at node \(8\).
+Here \(u_1=nh\) and bond \(a\) remain open:
+\[
+ \psi_{2,a}^{(h,\lambda)}[n]
+ =h\sum_{b,s}L^{(8)}_{abs}\sum_{m=0}^{n}
+ B'_b[n,m]\,\Lambda[m]\,\psi_{3,s}^{(h,\lambda)}[m].
+\]
+
+\subhead{3.5\quad Sum over \(u_1\) with weight \(\lambda(u_1)\)}
+Form \(A'_a[n,m]\) as in Section 2.5. Weight the incoming message on
+\(u_1=mh\), sum its time legs, and close the last tree bond \(a\):
+\[
+ \boxed{Q_{4,\lambda}^{(h)}[n]
+ =h\sum_a\sum_{m=0}^{n}A'_a[n,m]\,\Lambda[m]\,
+ \psi_{2,a}^{(h,\lambda)}[m].}
+\]
+Only the \(t=nh\) bits remain open. There is no additional factor of
+\(\lambda(t)\): each weighted time was summed out once. Expanding the
+messages gives the inclusive ordered sum with overall weight \(h^4\) and
+one factor \(\Lambda\) at each of the four time indices. Setting
+\(\Lambda[m]=1\) recovers Section 2.
 \end{document}
