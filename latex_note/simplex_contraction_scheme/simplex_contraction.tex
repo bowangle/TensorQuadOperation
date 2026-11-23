@@ -50,7 +50,7 @@
  \draw[phys] (o)--++(0,-.8) node[below,lab] {$m'$};
  \end{tikzpicture}}
 \begin{document}
-\titleline{Retracting a four-gap tensor tree}
+\titleline{1. Introduction}
 The goal is a single MPS whose open physical legs encode the observation time \(t\).
 The input has four branches for \(v_i=u_{i-1}-u_i\), where \(u_0=t\), and two
 internal tensors \(L^{(8)}\) and \(R^{(9)}\). We take \(\lambda=1\) throughout.
@@ -81,7 +81,7 @@ least significant bit to the odd site. With \(p\) bits, replace each pair by its
  F(v_1,v_2,v_3,v_4)=\sum_{a,b,c,d,s}
  A_a(v_1)B_b(v_2)L^{(8)}_{abs}R^{(9)}_{scd}C_c(v_3)D_d(v_4).
 \]
-\subhead{0.1\quad Identify the gap registers and their domain}
+\subhead{1.1\quad Identify the gap registers and their domain}
 The integration variables are the ordered times \(0\le u_4\le u_3\le u_2\le u_1\le t\).
 The TPS takes their successive differences as its arguments:
 \[
@@ -99,7 +99,7 @@ The remaining times that bound the successive gap integrations are
  u_3 &= u_2-v_3=\bigl((t-v_1)-v_2\bigr)-v_3=t-(v_1+v_2+v_3).
 \end{aligned}
 \]
-\subhead{0.2\quad Choose the order of elimination}
+\subhead{1.2\quad Choose the order of elimination}
 Read these integrals from the inside out. The upper limit on branch \(67\)
 is \(u_3=t-(v_1+v_2+v_3)\). We keep this limit as a binary register while removing
 the branch. Each subsequent contraction passes the register to its parent:
@@ -113,7 +113,7 @@ the branch. Each subsequent contraction passes the register to its parent:
 One input tree yields this whole function of \(t\) when its gap kernels
 are common throughout the observation window.
 
-\titleline{6. The four-gap TPS and its simplex integral}
+\titleline{2. Simplex integral of a four-variable TPS}
 \[
  f(v_1,v_2,v_3,v_4)
  =\sum_{a,b,c,d,s}
@@ -129,7 +129,7 @@ The four branches of the TPS take successive time differences as their arguments
  \int_0^{u_3}\!\mathrm{d}u_4\;
  f(t-u_1,\,u_1-u_2,\,u_2-u_3,\,u_3-u_4).
 \]
-\subhead{6.1\quad Integrate the ordered times recursively}
+\subhead{2.1\quad Integrate the ordered times recursively}
 Starting with the innermost time \(u_4\), define
 \[
 \begin{aligned}
@@ -147,9 +147,9 @@ Starting with the innermost time \(u_4\), define
 \end{aligned}
 \]
 The three intermediate functions are the messages \(M_d\), \(N_s\), and \(P_a\)
-in Section 0.2, respectively.
+in Section 1.2, respectively.
 
-\subhead{6.2\quad Construct \(\psi_{4,d}(u_3)\) by summing over \(u_4\)}
+\subhead{2.2\quad Construct \(\psi_{4,d}(u_3)\) by summing over \(u_4\)}
 Let \(R\) be the number of bits in each of the \(v_4\), \(u_4\), and \(u_3\) registers.
 Write \(v_4=kh\), \(u_4=mh\), \(u_3=nh\), and \(D_d[k]=D_d(kh)\), with \(h=\Delta x\).
 Each index ranges from \(0\) to \(2^R-1\). Number the bits from least to most significant,
@@ -274,10 +274,10 @@ Its open legs encode \(u_3=h(u_{3,1}+2u_{3,2})\), and bond \(d\) connects it to 
 With \(R\) bits the branch has \(R\) open \(u_3\) legs.}
 \end{minipage}\par
 
-\subhead{6.3\quad Express \(\psi_{3,s}(u_2)\) in terms of \(\psi_{4,d}(u_3)\)}
+\subhead{2.3\quad Express \(\psi_{3,s}(u_2)\) in terms of \(\psi_{4,d}(u_3)\)}
 Write \(u_2=nh\), \(u_3=mh\), \(v_3=kh\), and \(C_c[k]=C_c(kh)\).
 All three registers have \(R\) bits. Here \(m=\sum_{j=1}^R2^{j-1}m_j\)
-indexes the output of Section 6.2. Using the same inclusive grid sum gives
+indexes the output of Section 2.2. Using the same inclusive grid sum gives
 \[
 \begin{aligned}
  \psi_{3,s}(u_2)
@@ -292,7 +292,7 @@ indexes the output of Section 6.2. Using the same inclusive grid sum gives
 \]
 
 \textbf{1. Form the two-time MPO.}
-Contract the \(v_3\) register of \(C_c\) with the same subtractor \(S\) as in Section 6.2:
+Contract the \(v_3\) register of \(C_c\) with the same subtractor \(S\) as in Section 2.2:
 \[
  C'_c[n,m]=\sum_{k=0}^{2^R-1}\delta_{n,k+m}\,C_c[k]
  =\begin{cases} C_c((n-m)h),&m\le n,\\0,&m>n.\end{cases}
@@ -386,10 +386,10 @@ The existing tree node joins the \(c\) and \(d\) bonds. The open legs are the
 \note{Sites \(5,4\) carry \(C_c(v_3)\). Each adder core \(S_j\) connects a \(v_{3,j}\) bit to the matching \(u_{3,j}\) bit of \(\psi_{4,d}^{(h)}\) and exposes the \(u_{2,j}\) bit. It enforces \(v_{3,j}+u_{3,j}+\gamma_{j-1}=u_{2,j}+2\gamma_j\). The internal carry \(\gamma_1\) passes from \(S_1\) to \(S_2\), with both boundary carries fixed to zero. Contracting this subtree with node \(9\) and weighting by \(h\) gives the lower tree.}
 \end{minipage}\par
 \Needspace{9\baselineskip}
-\subhead{6.4\quad Express \(\psi_{2,a}(u_1)\) in terms of \(\psi_{3,s}(u_2)\)}
+\subhead{2.4\quad Express \(\psi_{2,a}(u_1)\) in terms of \(\psi_{3,s}(u_2)\)}
 Write \(u_1=nh\), \(u_2=mh\), \(v_2=kh\), and \(B_b[k]=B_b(kh)\).
 All three registers have \(R\) bits. Here \(m=\sum_{j=1}^R2^{j-1}m_j\)
-indexes the output of Section 6.3. Using the same inclusive grid sum gives
+indexes the output of Section 2.3. Using the same inclusive grid sum gives
 \[
 \begin{aligned}
  \psi_{2,a}(u_1)
@@ -404,7 +404,7 @@ indexes the output of Section 6.3. Using the same inclusive grid sum gives
 \]
 
 \textbf{1. Form the two-time MPO.}
-Contract the \(v_2\) register of \(B_b\) with the same subtractor \(S\) as in Section 6.3:
+Contract the \(v_2\) register of \(B_b\) with the same subtractor \(S\) as in Section 2.3:
 \[
  B'_b[n,m]=\sum_{k=0}^{2^R-1}\delta_{n,k+m}\,B_b[k]
  =\begin{cases} B_b((n-m)h),&m\le n,\\0,&m>n.\end{cases}
@@ -495,5 +495,102 @@ The existing tree node joins the \(b\) and \(s\) bonds. The open legs are the
 \(u_2\) legs with \(\psi_{3,s}^{(h)}\), summing \(b,s\) at node \(8\), and weighting
 by \(h\) gives the lower tree. Bond \(a\) now connects \(\psi_{2,a}^{(h)}(u_1)\)
 directly to branch \(01\).}
+\end{minipage}\par
+
+\Needspace{9\baselineskip}
+\subhead{2.5\quad Express \(\psi_1(t)=Q_4(t)\) in terms of \(\psi_{2,a}(u_1)\)}
+Repeat the same construction one last time, now with \(t=nh\), \(u_1=mh\),
+\(v_1=kh\), and \(A_a[k]=A_a(kh)\). The input message is the output of
+Section 2.4. The subtractor now exposes the \(u_1\) and \(t\) registers,
+instead of the \(u_2\) and \(u_1\) registers:
+\[
+\begin{aligned}
+ \psi_1(t)=Q_4(t)
+ &=\sum_a\int_0^t A_a(t-u_1)\,\psi_{2,a}(u_1)\,\mathrm{d}u_1\\
+ &\approx h\sum_a\sum_{m=0}^{n}
+ A_a\bigl((n-m)h\bigr)\,\psi_{2,a}^{(h)}[m]\\
+ &=h\sum_a\sum_{m_1=0}^1\cdots\sum_{m_R=0}^1
+ \sum_{k=0}^{2^R-1}\delta_{n,k+m}\,A_a[k]\,\psi_{2,a}^{(h)}[m].
+\end{aligned}
+\]
+
+\textbf{1. Form the final two-time MPO.}
+Contract the \(v_1\) register of branch \(01\) with the same subtractor \(S\):
+\[
+ A'_a[n,m]=\sum_{k=0}^{2^R-1}\delta_{n,k+m}\,A_a[k]
+ =\begin{cases}A_a((n-m)h),&m\le n,\\0,&m>n.\end{cases}
+\]
+Its physical legs encode \(t\) and \(u_1\). Ordinary integer addition with
+zero boundary carries enforces \(u_1\le t\), including \(u_1=t\).
+At each bit site the constraint is
+\[
+ v_{1,j}+u_{1,j}+\gamma_{j-1}=t_j+2\gamma_j,
+ \qquad \gamma_0=\gamma_R=0.
+\]
+
+\textbf{2. Connect the matching \(u_1\) legs.}
+For each \(j\), join leg \(m_j\) of \(A'_a\) to the matching leg of
+\(\psi_{2,a}^{(h)}\). These wires sum over the integration register and leave
+all \(t\) bits open:
+\[
+ X_{aa'}^{(h)}[n]
+ =h\sum_{m=0}^{2^R-1}A'_a[n,m]\,\psi_{2,a'}^{(h)}[m].
+\]
+Here \(a\) and \(a'\) label the two ends of the last tree bond before closing
+it. The new factor \(h\) weights the integration over \(u_1\) once.
+
+\textbf{3. Close the last tree bond.}
+Unlike Sections 2.3 and 2.4, no internal tree node remains. Bond \(a\)
+already joins branch \(01\) directly to \(\psi_{2,a}^{(h)}\); identify
+\(a'=a\) and sum this bond to obtain
+\[
+ \boxed{\psi_1^{(h)}[n]=Q_4^{(h)}[n]
+ =\sum_a X_{aa}^{(h)}[n]
+ =h\sum_a\sum_{m=0}^{n}
+ A_a\bigl((n-m)h\bigr)\,\psi_{2,a}^{(h)}[m].}
+\]
+Combining the internal bonds of the contracted chains gives a single MPS
+with only the \(t\) bits as open physical legs. The three previous factors
+of \(h\) are already contained in \(\psi_{2,a}^{(h)}\), so the full result
+has the required overall weight \(h^4\).
+
+\par\noindent\begin{minipage}{\linewidth}
+\textbf{Full network before and after the \(u_1\) contraction.}
+\begin{center}
+\begin{tikzpicture}[each]
+ \node[anchor=west,font=\bfseries] at (-.75,2.85) {Before};
+ \foreach \j/\y/\site in {1/.65/1,2/-1/0}{
+   \node[core] (A\j) at (0,\y) {$\site$};
+   \node[oper] (add\j) at (3.3,\y) {$S_{\j}$};
+   \node[msg] (old\j) at (6.6,\y) {$\psi_2^{[\j]}$};
+   \draw[phys] (A\j.east)--node[above,lab] {$v_{1,\j}$} (add\j.west);
+   \draw[phys] (add\j.east)--node[above,lab] {$u_{1,\j}$} (old\j.west);
+   \draw[phys] (add\j.south east)--++(.52,-.40) node[right,lab] {$t_{\j}$};
+ }
+ \draw[bond] (A1.north)--(0,2.2)--node[above,lab] {$a$} (6.6,2.2)--(old1.north);
+ \draw[bond] (A1)--(A2); \draw[bond] (old1)--(old2);
+ \draw[bond] (add1.north)--++(0,.37) node[above,lab] {$\gamma_0=0$};
+ \draw[bond] (add1.south)--node[left,lab] {$\gamma_1$} (add2.north);
+ \draw[bond] (add2.south)--++(0,-.38) node[below,lab] {$\gamma_2=0$};
+ \node at (0,-1.7) {$A_a(v_1)$};
+ \node at (6.6,-1.7) {$\psi_{2,a}^{(h)}(u_1)$};
+ \begin{scope}[yshift=-5.4cm]
+  \node[anchor=west,font=\bfseries] at (-.75,2.55) {After};
+  \foreach \j/\y in {1/.65,2/-1}{
+    \node[msg] (out\j) at (3.3,\y) {$\psi_1^{[\j]}$};
+    \draw[phys] (out\j.east)--++(.55,0) node[right,lab] {$t_{\j}$};
+  }
+  \draw[bond] (out1)--(out2);
+  \node at (3.3,-1.7) {$\psi_1^{(h)}(t)=Q_4^{(h)}(t)$};
+ \end{scope}
+\end{tikzpicture}
+\end{center}
+\note{Sites \(1,0\) carry \(A_a(v_1)\). Each subtractor core connects
+\(v_{1,j}\) to the matching \(u_{1,j}\) bit of \(\psi_{2,a}^{(h)}\) and
+exposes \(t_j\). Contracting the \(u_1\) bits and bond \(a\), and multiplying
+by \(h\), gives the lower MPS. No tree bond remains open. Its physical legs
+encode \(t=h(t_1+2t_2)\); with \(R\) bits there are \(R\) open \(t\) legs.
+This one MPS represents all grid observation times: evaluating it at a
+chosen \(t\) requires no further integration.}
 \end{minipage}\par
 \end{document}
