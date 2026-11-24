@@ -185,13 +185,16 @@ _zip_up_site_matrix(const Tensor3D<T>& r, const Tensor3D<T>& x, const Tensor3D<T
 // all cores except the last are left-canonical (they come out of the
 // U factor of a truncated SVD), and the last core carries the weight.
 //
-// Both output boundary sizes are products of the input boundary sizes.
-// The MPO index varies fastest on the left and the MPS index on the right.
+// Each output boundary size is the product of the corresponding input sizes.
+// The initial identity environment keeps the left pair open in slot
+// left_mps * mpo_left_size + left_mpo. The last site keeps the right pair
+// open in slot right_mps + mps_right_size * right_mpo. The SVDs act on
+// internal bonds, so either or both output boundary legs may be dangling.
 namespace detail {
 
 // The matrix packs the left bond fastest within each physical block of rows.
-template<typename T>
-Tensor3D<T> zip_up_output_core(const typename Tensor3D<T>::MatrixX& matrix,
+template<typename T, typename Matrix>
+Tensor3D<T> zip_up_output_core(const Matrix& matrix,
                                Eigen::Index left, Eigen::Index physical, int ordering)
 {
     const Eigen::Index right = matrix.cols();
@@ -317,6 +320,8 @@ std::vector<Tensor3D<T>> zip_up_mpo_mpo(
 
 } // namespace zip_up
 
+namespace qrsvd {
+
 // MPO @ MPS via exact contraction with QR re-orthogonalization.
 //
 // The left-to-right sweep is untruncated: bond dimensions may grow as
@@ -328,14 +333,25 @@ std::vector<Tensor3D<T>> zip_up_mpo_mpo(
 // Assumes both inputs are left-canonical. Returns MPS cores with
 // canonical center at the LAST site: all cores except the last come
 // out of a Q factor (left-canonical), the last carries the weight.
-// Boundary conventions are identical to zip_up_mpo_mps.
+// Dangling boundaries use the same packing as zip-up. The initial identity
+// environment keeps left_mps * mpo_left_size + left_mpo open on the left.
+// The last core keeps right_mps + mps_right_size * right_mpo open on the right.
+// Both boundary sizes are products, and QR factors only the internal bonds.
+namespace detail {
+
 template<typename T>
-std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
+std::vector<Tensor3D<T>> contract_mpo_mps_cores(
     std::vector<Tensor3D<T>> const& mpo,
-    std::vector<Tensor3D<T>> const& mps)
+    std::vector<Tensor3D<T>> const& mps,
+    int ordering, Eigen::Index input_dim, Eigen::Index output_dim)
 {
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+    using zip_up::detail::zip_up_core_dimensions;
+    using zip_up::detail::zip_up_output_core;
+    using zip_up::detail::zip_up_output_dimension;
 
+    if (ordering < 0 || ordering > 2)
+        throw std::invalid_argument("utc::qrsvd_contract_mpo_mps: ordering must be 0, 1 or 2");
     const std::size_t n = mpo.size();
     if (n == 0 || mps.size() != n)
         throw std::invalid_argument(
@@ -345,20 +361,32 @@ std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
     res.reserve(n);
 
     // Dummy environment r(a, l, L) = delta(a, l*L0 + L)
-    const Eigen::Index l0 = mps[0].n_rows;
-    const Eigen::Index L0 = mpo[0].n_rows;
+    const Eigen::Index l0 = zip_up_core_dimensions(mps.front(), ordering)[0];
+    const Eigen::Index L0 = zip_up_core_dimensions(mpo.front(), ordering)[0];
+    if (l0 <= 0 || L0 <= 0)
+        throw std::invalid_argument("utc::qrsvd_contract_mpo_mps: left bond dimensions must be positive");
     Tensor3D<T> r(l0 * L0, l0, L0);   // zero-initialized
     for (Eigen::Index l = 0; l < l0; ++l)
         for (Eigen::Index L = 0; L < L0; ++L)
             r(l * L0 + L, l, L) = T(1);
 
-    for (std::size_t i = 0; i + 1 < n; ++i) {
-        const Eigen::Index A     = r.n_rows;
-        const Eigen::Index p_out = mpo[i].n_cols / mps[i].n_cols;
-        const Eigen::Index n_rM  = mps[i].n_slices;
-        const Eigen::Index n_RO  = mpo[i].n_slices;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto mps_shape = zip_up_core_dimensions(mps[i], ordering);
+        const auto mpo_shape = zip_up_core_dimensions(mpo[i], ordering);
+        const Eigen::Index A = r.n_rows;
+        const Eigen::Index p_in = input_dim > 0 ? input_dim : mps_shape[1];
+        const Eigen::Index p_out = output_dim > 0 ? output_dim : zip_up_output_dimension(mpo_shape[1], p_in);
+        const Eigen::Index n_rM = mps_shape[2];
+        const Eigen::Index n_RO = mpo_shape[2];
+        if (n_rM <= 0 || n_RO <= 0)
+            throw std::invalid_argument("utc::qrsvd_contract_mpo_mps: right bond dimensions must be positive");
 
-        MatrixX M = zip_up::_zip_up_site_matrix(r, mps[i], mpo[i]);
+        MatrixX M = zip_up::_zip_up_site_matrix(r, mps[i], mpo[i], p_in, p_out, ordering);
+        if (i + 1 == n) {
+            // Last site: contract, no factorization.
+            res.push_back(zip_up_output_core<T>(M, A, p_out, ordering));
+            break;
+        }
 
         // Reduced QR: M = Q * R2, Q with orthonormal columns.
         auto qr = xfac_quad::MatQR<T>{}(M, /*left=*/true);
@@ -366,10 +394,8 @@ std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
         MatrixX& R2 = qr[1];      // k x (n_rM*n_RO)
         const Eigen::Index k = Q.cols();
 
-        // New core: Tensor3D(A, p_out, k) with flatten_as_matrix2 == Q
-        Tensor3D<T> core(A, p_out, k);
-        std::copy(Q.data(), Q.data() + Q.size(), core.data.begin());
-        res.push_back(std::move(core));
+        // Write Q into the output core in its native storage order.
+        res.push_back(zip_up_output_core<T>(Q, A, p_out, ordering));
 
         // Next environment: Tensor3D(k, n_rM, n_RO) with
         // flatten_as_matrix1 == R2 (column index = rM + RO*n_rM).
@@ -377,22 +403,35 @@ std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
         std::copy(R2.data(), R2.data() + R2.size(), r.data.begin());
     }
 
-    // Last site: contract, no factorization.
-    {
-        const Eigen::Index A     = r.n_rows;
-        const Eigen::Index p_out = mpo[n - 1].n_cols / mps[n - 1].n_cols;
-        const Eigen::Index n_rM  = mps[n - 1].n_slices;
-        const Eigen::Index n_RO  = mpo[n - 1].n_slices;
-
-        MatrixX M = zip_up::_zip_up_site_matrix(r, mps[n - 1], mpo[n - 1]);
-
-        Tensor3D<T> core(A, p_out, n_rM * n_RO);
-        std::copy(M.data(), M.data() + M.size(), core.data.begin());
-        res.push_back(std::move(core));
-    }
-
     return res;
 }
+
+} // namespace detail
+
+// Raw cores use the supplied ordering and infer physical dimensions at each site.
+template<typename T>
+std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
+    const std::vector<Tensor3D<T>>& mpo, const std::vector<Tensor3D<T>>& mps,
+    int ordering = 1)
+{
+    return detail::contract_mpo_mps_cores(mpo, mps, ordering, 0, 0);
+}
+
+// The typed path uses the MPO's physical dimensions and requires a shared layout.
+template<typename T>
+std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(const MPO<T>& mpo, const MPS<T>& mps)
+{
+    const int ordering = mpo.get_ordering();
+    if (ordering != mps.get_ordering())
+        throw std::invalid_argument("utc::qrsvd_contract_mpo_mps: MPO and MPS must have the same ordering");
+
+    return detail::contract_mpo_mps_cores(mpo.get_core(), mps.get_core(), ordering,
+                                          mpo.get_right_phys(), mpo.get_left_phys());
+}
+
+} // namespace qrsvd
+
+namespace optimized {
 
 // =====================================================================
 //        MPO @ MPS via variational (DMRG-like) fitting sweeps
@@ -409,20 +448,18 @@ std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
 // where B is an MPS core, W an MPO core with fused physical slot
 // p = pz * Pm + pm (output index pz, input index pm), W4 its unfolded
 // form, and L / R are 3-leg environments stored as Tensor3D(m, k, z).
-// The packed index conventions are chosen so that every result maps
-// byte-for-byte onto Tensor3D's flatten_as_matrix1/2 layouts (which
-// share the same underlying memory order), so cores and environments
-// are plain std::copy's of matrix products. Then:
+// The local matrices and environments use the packing of Tensor3D's
+// flatten_as_matrix1/2 layouts. Physical slices are read in the input
+// layout, and the factors are written in that same layout. The updates are:
 //
 //   env_right_step : R_new.flat2 = half_right(R,B,W) * conj(C).flat1^T
 //   env_left_step  : L_new.flat2 = half_left(L,B,W)  * conj(C).flat2
 //   local 1-site   : T.flat2     = half_left(L,B,W)^T * R.flat2
 //   local 2-site   : M2          = half_left(L,B0,W0)^T * half_right(R,B1,W1)
 //
-// The whole scheme (index packings, conjugation placement, sweep
-// logic, boundary augmentation) was verified numerically against
-// dense MPO @ MPS and against the reference Python on random complex
-// tensor trains, including nontrivial boundary legs on either side.
+// The original ordering-1 sweeps and auxiliary-site boundary handling
+// were checked against dense MPO @ MPS and the reference Python on
+// random complex tensor trains with a nontrivial leg on either side.
 //
 // The environments carry conj(z-side core) on their z leg; the local
 // tensor T is then directly the optimal (un-conjugated) core. The
@@ -434,6 +471,11 @@ namespace detail {
 
 template<typename T>
 using Mat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+
+using zip_up::detail::zip_up_core_dimensions;
+using zip_up::detail::zip_up_output_core;
+using zip_up::detail::zip_up_output_dimension;
+using zip_up::detail::zip_up_physical_slice;
 
 template<typename T>
 Tensor3D<T> conj_tensor(Tensor3D<T> const& x)
@@ -454,11 +496,12 @@ Tensor3D<T> trivial_env()
 
 template<typename T>
 Mat<T> half_left(Tensor3D<T> const& L, Tensor3D<T> const& B,
-                 Tensor3D<T> const& W, Eigen::Index Pz)
+                 Tensor3D<T> const& W, Eigen::Index Pz, int ordering)
 {
     const Eigen::Index nlm = L.n_rows, nlk = L.n_cols, nzl = L.n_slices;
-    const Eigen::Index Pm = B.n_cols, nrm = B.n_slices, nrk = W.n_slices;
-    if (B.n_rows != nlm || W.n_rows != nlk || W.n_cols != Pz * Pm)
+    const auto [b_left, Pm, nrm] = zip_up_core_dimensions(B, ordering);
+    const auto [w_left, w_physical, nrk] = zip_up_core_dimensions(W, ordering);
+    if (b_left != nlm || w_left != nlk || w_physical != Pz * Pm)
         throw std::invalid_argument("utc::optimize: dimension mismatch in half_left");
 
     Mat<T> Z1M = Mat<T>::Zero(nrm * nrk, nzl * Pz);
@@ -469,10 +512,10 @@ Mat<T> half_left(Tensor3D<T> const& L, Tensor3D<T> const& B,
 
     for (Eigen::Index pm = 0; pm < Pm; ++pm) {
         // Y = B_phys^T * Lf1   (nrm, nlk*nzl) — single GEMM
-        Mat<T> Y = B.col_as_mat_const(pm).transpose() * Lf1;
+        Mat<T> Y = zip_up_physical_slice(B, ordering, pm).transpose() * Lf1;
 
         for (Eigen::Index pz = 0; pz < Pz; ++pz) {
-            auto Wsl = W.col_as_mat_const(pz * Pm + pm);         // nlk x nrk
+            const auto Wsl = zip_up_physical_slice(W, ordering, pz * Pm + pm); // nlk x nrk
 
             // Reshape Y from (nrm, nlk*nzl) to (nrm*nzl, nlk)
             // so we can contract all lz at once with a single GEMM.
@@ -499,11 +542,12 @@ Mat<T> half_left(Tensor3D<T> const& L, Tensor3D<T> const& B,
 
 template<typename T>
 Mat<T> half_right(Tensor3D<T> const& R, Tensor3D<T> const& B,
-                  Tensor3D<T> const& W, Eigen::Index Pz)
+                  Tensor3D<T> const& W, Eigen::Index Pz, int ordering)
 {
     const Eigen::Index nrm = R.n_rows, nrk = R.n_cols, nzr = R.n_slices;
-    const Eigen::Index Pm = B.n_cols, nlm = B.n_rows, nlk = W.n_rows;
-    if (B.n_slices != nrm || W.n_slices != nrk || W.n_cols != Pz * Pm)
+    const auto [nlm, Pm, b_right] = zip_up_core_dimensions(B, ordering);
+    const auto [nlk, w_physical, w_right] = zip_up_core_dimensions(W, ordering);
+    if (b_right != nrm || w_right != nrk || w_physical != Pz * Pm)
         throw std::invalid_argument("utc::optimize: dimension mismatch in half_right");
 
     Mat<T> MR = Mat<T>::Zero(nlm * nlk, Pz * nzr);
@@ -514,10 +558,10 @@ Mat<T> half_right(Tensor3D<T> const& R, Tensor3D<T> const& B,
 
     for (Eigen::Index pm = 0; pm < Pm; ++pm) {
         // Y = B_phys * Rf1   (nlm, nrk*nzr) — single GEMM
-        Mat<T> Y = B.col_as_mat_const(pm) * Rf1;
+        Mat<T> Y = zip_up_physical_slice(B, ordering, pm) * Rf1;
 
         for (Eigen::Index pz = 0; pz < Pz; ++pz) {
-            auto Wsl = W.col_as_mat_const(pz * Pm + pm);         // nlk x nrk
+            const auto Wsl = zip_up_physical_slice(W, ordering, pz * Pm + pm); // nlk x nrk
 
             // Reshape Y from (nlm, nrk*nzr) to (nlm*nzr, nrk)
             // Layout: Y(lm, zr*nrk + rk) → Y_reorder(lm + zr*nlm, rk)
@@ -547,12 +591,26 @@ Mat<T> half_right(Tensor3D<T> const& R, Tensor3D<T> const& B,
 template<typename T>
 Tensor3D<T> env_right_step(Tensor3D<T> const& B, Tensor3D<T> const& W,
                            Tensor3D<T> const& Cbar, Tensor3D<T> const& R,
-                           Eigen::Index Pz)
+                           Eigen::Index Pz, int ordering)
 {
-    Mat<T> out = half_right(R, B, W, Pz)
-               * Cbar.flatten_as_matrix1_const().transpose();  // (nlm*nlk) x nlz
-    Tensor3D<T> env(B.n_rows, W.n_rows, Cbar.n_rows);
-    std::copy(out.data(), out.data() + out.size(), env.data.begin());
+    const auto c_shape = zip_up_core_dimensions(Cbar, ordering);
+    if (c_shape[1] != Pz || c_shape[2] != R.n_slices)
+        throw std::invalid_argument("utc::optimize: guess dimensions do not match the right environment");
+    const Mat<T> half = half_right(R, B, W, Pz, ordering);
+    Tensor3D<T> env(zip_up_core_dimensions(B, ordering)[0],
+                    zip_up_core_dimensions(W, ordering)[0], c_shape[0]);
+    auto out = env.flatten_as_matrix2();
+    if (ordering == 1) {
+        out.noalias() = half * Cbar.flatten_as_matrix1_const().transpose();
+    } else {
+        // Columns for a fixed p are interleaved over the right guess bond.
+        using Stride = Eigen::OuterStride<Eigen::Dynamic>;
+        for (Eigen::Index p = 0; p < Pz; ++p) {
+            const Eigen::Map<const Mat<T>, 0, Stride> block(
+                half.data() + p * half.rows(), half.rows(), c_shape[2], Stride(Pz * half.rows()));
+            out.noalias() += block * zip_up_physical_slice(Cbar, ordering, p).transpose();
+        }
+    }
     return env;
 }
 
@@ -560,26 +618,33 @@ Tensor3D<T> env_right_step(Tensor3D<T> const& B, Tensor3D<T> const& W,
 template<typename T>
 Tensor3D<T> env_left_step(Tensor3D<T> const& B, Tensor3D<T> const& W,
                           Tensor3D<T> const& Zbar, Tensor3D<T> const& L,
-                          Eigen::Index Pz)
+                          Eigen::Index Pz, int ordering)
 {
-    Mat<T> out = half_left(L, B, W, Pz)
-               * Zbar.flatten_as_matrix2_const();               // (nrm*nrk) x nrz
-    Tensor3D<T> env(B.n_slices, W.n_slices, Zbar.n_slices);
-    std::copy(out.data(), out.data() + out.size(), env.data.begin());
+    const auto z_shape = zip_up_core_dimensions(Zbar, ordering);
+    if (z_shape[1] != Pz || z_shape[0] != L.n_slices)
+        throw std::invalid_argument("utc::optimize: guess dimensions do not match the left environment");
+    const Mat<T> half = half_left(L, B, W, Pz, ordering);
+    Tensor3D<T> env(zip_up_core_dimensions(B, ordering)[2],
+                    zip_up_core_dimensions(W, ordering)[2], z_shape[2]);
+    auto out = env.flatten_as_matrix2();
+    if (ordering == 1) {
+        out.noalias() = half * Zbar.flatten_as_matrix2_const();
+    } else {
+        for (Eigen::Index p = 0; p < Pz; ++p)
+            out.noalias() += half.middleCols(p * z_shape[0], z_shape[0])
+                           * zip_up_physical_slice(Zbar, ordering, p);
+    }
     return env;
 }
 
 // T(lz, pz, rz) = sum L(lm,lk,lz) B(lm,pm,rm) W4(lk,pz,pm,rk) R(rm,rk,rz)
 template<typename T>
-Tensor3D<T> local_1site(Tensor3D<T> const& L, Tensor3D<T> const& B,
-                        Tensor3D<T> const& W, Tensor3D<T> const& R,
-                        Eigen::Index Pz)
+Mat<T> local_1site(Tensor3D<T> const& L, Tensor3D<T> const& B,
+                   Tensor3D<T> const& W, Tensor3D<T> const& R,
+                   Eigen::Index Pz, int ordering)
 {
-    Mat<T> Tm = half_left(L, B, W, Pz).transpose()
-              * R.flatten_as_matrix2_const();                   // (nzl*Pz) x nzr
-    Tensor3D<T> out(L.n_slices, Pz, R.n_slices);
-    std::copy(Tm.data(), Tm.data() + Tm.size(), out.data.begin());
-    return out;
+    return half_left(L, B, W, Pz, ordering).transpose()
+         * R.flatten_as_matrix2_const(); // (nzl*Pz) x nzr
 }
 
 // M2[(lz + nzl*pz0), (pz1 + Pz1*rz)]: the two-site local matrix.
@@ -588,70 +653,78 @@ Mat<T> local_2site(Tensor3D<T> const& L,
                    Tensor3D<T> const& B0, Tensor3D<T> const& W0,
                    Tensor3D<T> const& B1, Tensor3D<T> const& W1,
                    Tensor3D<T> const& R,
-                   Eigen::Index Pz0, Eigen::Index Pz1)
+                   Eigen::Index Pz0, Eigen::Index Pz1, int ordering)
 {
-    return half_left(L, B0, W0, Pz0).transpose()
-         * half_right(R, B1, W1, Pz1);
+    return half_left(L, B0, W0, Pz0, ordering).transpose()
+         * half_right(R, B1, W1, Pz1, ordering);
 }
 
 template<typename T>
 std::vector<Eigen::Index> phys_out_dims(std::vector<Tensor3D<T>> const& k,
-                                        std::vector<Tensor3D<T>> const& m)
+                                        std::vector<Tensor3D<T>> const& m, int ordering)
 {
     std::vector<Eigen::Index> Pz(m.size());
-    for (std::size_t i = 0; i < m.size(); ++i) {
-        if (k[i].n_cols % m[i].n_cols != 0)
-            throw std::invalid_argument(
-                "utc::optimize: MPO physical dimension is not a multiple of the MPS one");
-        Pz[i] = k[i].n_cols / m[i].n_cols;
-    }
+    for (std::size_t i = 0; i < m.size(); ++i)
+        Pz[i] = zip_up_output_dimension(zip_up_core_dimensions(k[i], ordering)[1],
+                                        zip_up_core_dimensions(m[i], ordering)[1]);
     return Pz;
+}
+
+// A right factor packs the physical index fastest within each right-bond block.
+template<typename T>
+Tensor3D<T> right_factor_to_core(const Mat<T>& factor, Eigen::Index physical,
+                                 Eigen::Index right, int ordering)
+{
+    const Eigen::Map<const Mat<T>> packed(factor.data(), factor.rows() * physical, right);
+    return zip_up_output_core<T>(packed, factor.rows(), physical, ordering);
 }
 
 // One full 1-site fitting sweep (forward QR pass building left
 // environments, then backward LQ pass producing the cores).
-// Requires trivial (dim 1) boundary legs on all three trains.
+// The supplied boundary environments identify the fused external indices.
 // Output: right-canonical with center at site 0.
 template<typename T>
 std::vector<Tensor3D<T>> optimize_1site_pass(std::vector<Tensor3D<T>> const& z,
                                              std::vector<Tensor3D<T>> const& k,
-                                             std::vector<Tensor3D<T>> const& m)
+                                             std::vector<Tensor3D<T>> const& m,
+                                             int ordering,
+                                             const Tensor3D<T>& left_boundary,
+                                             const Tensor3D<T>& right_boundary)
 {
     using MatrixX = Mat<T>;
     const int r = static_cast<int>(m.size());
-    const std::vector<Eigen::Index> Pz = phys_out_dims(k, m);
+    const std::vector<Eigen::Index> Pz = phys_out_dims(k, m, ordering);
 
     // right environments from the conjugated guess: envR[i] covers i..r-1
-    std::vector<Tensor3D<T>> envR(r + 1, trivial_env<T>());
+    std::vector<Tensor3D<T>> envR(r + 1);
+    envR.back() = right_boundary;
     for (int i = r - 1; i > 0; --i)
-        envR[i] = env_right_step(m[i], k[i], conj_tensor(z[i]), envR[i + 1], Pz[i]);
+        envR[i] = env_right_step(m[i], k[i], conj_tensor(z[i]), envR[i + 1], Pz[i], ordering);
 
     // forward pass: only the left environments survive
     std::vector<Tensor3D<T>> envL;
     envL.reserve(r);
-    envL.push_back(trivial_env<T>());
+    envL.push_back(left_boundary);
     for (int w = 0; w + 1 < r; ++w) {
-        Tensor3D<T> Tw = local_1site(envL[w], m[w], k[w], envR[w + 1], Pz[w]);
-        auto qr = xfac_quad::MatQR<T>{}(Tw.flatten_as_matrix2(), /*left=*/true);
-        MatrixX& Q = qr[0];                            // (nzl*Pz) x q
-        Tensor3D<T> core(Tw.n_rows, Pz[w], Q.cols());
-        std::copy(Q.data(), Q.data() + Q.size(), core.data.begin());
-        envL.push_back(env_left_step(m[w], k[w], conj_tensor(core), envL[w], Pz[w]));
+        const MatrixX Tw = local_1site(envL[w], m[w], k[w], envR[w + 1], Pz[w], ordering);
+        auto qr = xfac_quad::MatQR<T>{}(Tw, /*left=*/true);
+        auto core = zip_up_output_core<T>(qr[0], envL[w].n_slices, Pz[w], ordering);
+        envL.push_back(env_left_step(m[w], k[w], conj_tensor(core), envL[w], Pz[w], ordering));
     }
 
     // backward pass: LQ at each site, weight ends up at site 0
-    std::vector<Tensor3D<T>> out(r, trivial_env<T>());  // placeholder-initialized
-    Tensor3D<T> curR = trivial_env<T>();
+    std::vector<Tensor3D<T>> out(r);
+    Tensor3D<T> curR = std::move(envR.back());
     for (int w = r - 1; w > 0; --w) {
-        Tensor3D<T> Tw = local_1site(envL[w], m[w], k[w], curR, Pz[w]);
-        auto lq = xfac_quad::MatQR<T>{}(Tw.flatten_as_matrix1(), /*left=*/false);
-        MatrixX& Q = lq[1];                            // q x (Pz*nzr), orthonormal rows
-        Tensor3D<T> core(Q.rows(), Pz[w], Tw.n_slices);
-        std::copy(Q.data(), Q.data() + Q.size(), core.data.begin());
-        curR = env_right_step(m[w], k[w], conj_tensor(core), curR, Pz[w]);
+        const MatrixX Tw = local_1site(envL[w], m[w], k[w], curR, Pz[w], ordering);
+        const Eigen::Map<const MatrixX> unfolded(Tw.data(), envL[w].n_slices, Pz[w] * curR.n_slices);
+        auto lq = xfac_quad::MatQR<T>{}(unfolded, /*left=*/false);
+        auto core = right_factor_to_core(lq[1], Pz[w], curR.n_slices, ordering);
+        curR = env_right_step(m[w], k[w], conj_tensor(core), curR, Pz[w], ordering);
         out[w] = std::move(core);
     }
-    out[0] = local_1site(envL[0], m[0], k[0], curR, Pz[0]);
+    const MatrixX first = local_1site(envL[0], m[0], k[0], curR, Pz[0], ordering);
+    out[0] = zip_up_output_core<T>(first, envL[0].n_slices, Pz[0], ordering);
     return out;
 }
 
@@ -663,76 +736,88 @@ std::vector<Tensor3D<T>> optimize_2site_pass(std::vector<Tensor3D<T>> const& z,
                                              std::vector<Tensor3D<T>> const& k,
                                              std::vector<Tensor3D<T>> const& m,
                                              typename Eigen::NumTraits<T>::Real reltol,
-                                             int max_bond_dim)
+                                             int max_bond_dim, int ordering,
+                                             const Tensor3D<T>& left_boundary,
+                                             const Tensor3D<T>& right_boundary)
 {
     using MatrixX = Mat<T>;
     const int r = static_cast<int>(m.size());
     if (r == 1)
-        return optimize_1site_pass(z, k, m);
-    const std::vector<Eigen::Index> Pz = phys_out_dims(k, m);
+        return optimize_1site_pass(z, k, m, ordering, left_boundary, right_boundary);
+    const std::vector<Eigen::Index> Pz = phys_out_dims(k, m, ordering);
 
-    std::vector<Tensor3D<T>> envR(r + 1, trivial_env<T>());
+    std::vector<Tensor3D<T>> envR(r + 1);
+    envR.back() = right_boundary;
     for (int i = r - 1; i > 1; --i)
-        envR[i] = env_right_step(m[i], k[i], conj_tensor(z[i]), envR[i + 1], Pz[i]);
+        envR[i] = env_right_step(m[i], k[i], conj_tensor(z[i]), envR[i + 1], Pz[i], ordering);
 
     std::vector<Tensor3D<T>> envL;
     envL.reserve(r - 1);
-    envL.push_back(trivial_env<T>());
+    envL.push_back(left_boundary);
     for (int w = 0; w + 2 < r; ++w) {
         MatrixX M2 = local_2site(envL[w], m[w], k[w], m[w + 1], k[w + 1],
-                                 envR[w + 2], Pz[w], Pz[w + 1]);
+                                 envR[w + 2], Pz[w], Pz[w + 1], ordering);
         xfac_quad::SVDDecomp<T> svd(M2, /*leftOrthogonal=*/true, reltol, max_bond_dim);
         MatrixX U = svd.left();                        // (nzl*Pz0) x chi
-        Tensor3D<T> core(envL[w].n_slices, Pz[w], U.cols());
-        std::copy(U.data(), U.data() + U.size(), core.data.begin());
-        envL.push_back(env_left_step(m[w], k[w], conj_tensor(core), envL[w], Pz[w]));
+        auto core = zip_up_output_core<T>(U, envL[w].n_slices, Pz[w], ordering);
+        envL.push_back(env_left_step(m[w], k[w], conj_tensor(core), envL[w], Pz[w], ordering));
     }
 
-    std::vector<Tensor3D<T>> out(r, trivial_env<T>());
-    Tensor3D<T> curR = trivial_env<T>();
+    std::vector<Tensor3D<T>> out(r);
+    Tensor3D<T> curR = std::move(envR.back());
     for (int w = r - 2; w >= 0; --w) {
         MatrixX M2 = local_2site(envL[w], m[w], k[w], m[w + 1], k[w + 1],
-                                 curR, Pz[w], Pz[w + 1]);
+                                 curR, Pz[w], Pz[w + 1], ordering);
         // leftOrthogonal=false: left() = U*S, right() = V^H
         xfac_quad::SVDDecomp<T> svd(M2, /*leftOrthogonal=*/false, reltol, max_bond_dim);
-        const Eigen::Index chi = svd.s.size();
-
         MatrixX VH = svd.right();                      // chi x (Pz1*nzr)
-        Tensor3D<T> core1(chi, Pz[w + 1], curR.n_slices);
-        std::copy(VH.data(), VH.data() + VH.size(), core1.data.begin());
+        auto core1 = right_factor_to_core(VH, Pz[w + 1], curR.n_slices, ordering);
 
         if (w > 0) {
             curR = env_right_step(m[w + 1], k[w + 1], conj_tensor(core1),
-                                  curR, Pz[w + 1]);
+                                  curR, Pz[w + 1], ordering);
             out[w + 1] = std::move(core1);
         } else {
             out[1] = std::move(core1);
             MatrixX US = svd.left();                   // (nzl*Pz0) x chi
-            Tensor3D<T> core0(envL[0].n_slices, Pz[0], chi);
-            std::copy(US.data(), US.data() + US.size(), core0.data.begin());
-            out[0] = std::move(core0);
+            out[0] = zip_up_output_core<T>(US, envL[0].n_slices, Pz[0], ordering);
         }
     }
     return out;
 }
 
+template<typename T>
+std::vector<Tensor3D<T>> run_sweeps(
+    std::vector<Tensor3D<T>> guess, const std::vector<Tensor3D<T>>& mpo,
+    const std::vector<Tensor3D<T>>& mps, typename Eigen::NumTraits<T>::Real reltol,
+    int max_bond_dim, int order, int n_sweeps, int ordering,
+    const Tensor3D<T>& left_boundary, const Tensor3D<T>& right_boundary)
+{
+    for (int s = 0; s < n_sweeps; ++s) {
+        if (order == 1)
+            guess = optimize_1site_pass(guess, mpo, mps, ordering, left_boundary, right_boundary);
+        else
+            guess = optimize_2site_pass(guess, mpo, mps, reltol, max_bond_dim,
+                                        ordering, left_boundary, right_boundary);
+    }
+    return guess;
+}
+
 } // namespace detail
 
-// MPO @ MPS via variational (DMRG-style) fitting, seeded with
-// `previous` as the initial guess (typically the MPS itself).
+// Raw-core entry point for ordering 1, seeded with `previous`.
 //
 //   order == 1 : 1-site sweeps — bond dimensions are frozen at those
 //                of the guess; QR/LQ only, no truncation inside.
 //   order != 1 : 2-site sweeps — bond dimensions adapt via truncated
 //                SVDs controlled by reltol / max_bond_dim.
 //
-// All three trains are assumed LEFT-canonical on entry (the guess is
-// used to build the initial right environments). Returns MPS cores
-// with canonical center at site 0: cores 1..r-1 are right-canonical.
+// The initial right environments are built from the guess.
+// The result has canonical center at site 0.
 //
-// Boundary legs: the inner sweeps require trivial boundaries, so as
-// in the Python this wrapper augments the trains with one auxiliary
-// site when boundary legs are nontrivial — on the left when all right
+// To support boundary truncation like the Python version, this wrapper
+// augments the trains with one auxiliary site when boundary legs are
+// nontrivial — on the left when all right
 // boundaries are 1, on the right when all left boundaries are 1 —
 // runs the sweeps, and absorbs the auxiliary site back (with an SVD
 // truncation of the boundary leg controlled by max_mu; max_mu = 0
@@ -761,15 +846,13 @@ std::vector<Tensor3D<T>> optimize_dm_generic(
         throw std::invalid_argument(
             "utc::optimize_dm_generic: trains must have the same (nonzero) length");
 
+    const auto boundary = detail::trivial_env<T>();
     auto run_sweeps = [&](std::vector<Tensor3D<T>> z2,
                           std::vector<Tensor3D<T>> const& k2,
                           std::vector<Tensor3D<T>> const& m2)
     {
-        for (int s = 0; s < n_sweeps; ++s)
-            z2 = (order == 1)
-                 ? detail::optimize_1site_pass(z2, k2, m2)
-                 : detail::optimize_2site_pass(z2, k2, m2, reltol, max_bond_dim);
-        return z2;
+        return detail::run_sweeps(std::move(z2), k2, m2, reltol, max_bond_dim, order, n_sweeps,
+                                  /*ordering=*/1, boundary, boundary);
     };
 
     auto const& z = previous;
@@ -906,5 +989,118 @@ std::vector<Tensor3D<T>> optimize_dm_generic(
     throw std::invalid_argument(
         "utc::optimize_dm_generic: not implemented when both boundary sides are nontrivial");
 }
+
+namespace detail {
+
+template<typename T>
+void check_train(const std::vector<Tensor3D<T>>& cores, Eigen::Index physical, int ordering)
+{
+    Eigen::Index previous_right = 0;
+    for (const auto& core : cores) {
+        const auto [left, phys, right] = zip_up_core_dimensions(core, ordering);
+        if (phys != physical)
+            throw std::invalid_argument("utc::optimize_dm_generic: physical dimension mismatch");
+        if (left <= 0 || right <= 0 || (previous_right != 0 && previous_right != left))
+            throw std::invalid_argument("utc::optimize_dm_generic: invalid bond dimensions");
+        previous_right = right;
+    }
+}
+
+template<typename T>
+void check_inputs(const MPO<T>& mpo, const MPS<T>& mps)
+{
+    const int ordering = mpo.get_ordering();
+    if (ordering != mps.get_ordering())
+        throw std::invalid_argument("utc::optimize_dm_generic: MPO and MPS must have the same ordering");
+    if (ordering < 0 || ordering > 2)
+        throw std::invalid_argument("utc::optimize_dm_generic: ordering must be 0, 1 or 2");
+    if (mpo.get_core().empty() || mpo.get_core().size() != mps.get_core().size())
+        throw std::invalid_argument("utc::optimize_dm_generic: trains must have the same (nonzero) length");
+
+    check_train(mpo.get_core(), static_cast<Eigen::Index>(mpo.get_left_phys()) * mpo.get_right_phys(), ordering);
+    check_train(mps.get_core(), mpo.get_right_phys(), ordering);
+}
+
+template<typename T>
+std::vector<Tensor3D<T>> optimize_from_guess(
+    MPS<T> guess, const MPO<T>& mpo, const MPS<T>& mps,
+    typename Eigen::NumTraits<T>::Real reltol, int max_bond_dim, int order, int n_sweeps)
+{
+    const int ordering = mpo.get_ordering();
+    if (guess.get_ordering() != ordering)
+        throw std::invalid_argument("utc::optimize_dm_generic: guess must have the same ordering as the MPO and MPS");
+
+    const auto& mpo_cores = mpo.get_core();
+    const auto& mps_cores = mps.get_core();
+    const auto& guess_cores = static_cast<const MPS<T>&>(guess).get_core();
+    if (guess_cores.size() != mpo_cores.size())
+        throw std::invalid_argument("utc::optimize_dm_generic: trains must have the same (nonzero) length");
+    check_train(guess_cores, mpo.get_left_phys(), ordering);
+
+    const auto mps_left = zip_up_core_dimensions(mps_cores.front(), ordering)[0];
+    const auto mps_right = zip_up_core_dimensions(mps_cores.back(), ordering)[2];
+    const auto mpo_left = zip_up_core_dimensions(mpo_cores.front(), ordering)[0];
+    const auto mpo_right = zip_up_core_dimensions(mpo_cores.back(), ordering)[2];
+    const auto left = mps_left * mpo_left;
+    const auto right = mps_right * mpo_right;
+    if (zip_up_core_dimensions(guess_cores.front(), ordering)[0] != left
+        || zip_up_core_dimensions(guess_cores.back(), ordering)[2] != right)
+        throw std::invalid_argument("utc::optimize_dm_generic: guess must have the product boundary dimensions");
+
+    Tensor3D<T> left_boundary(mps_left, mpo_left, left);
+    for (Eigen::Index m = 0; m < mps_left; ++m)
+        for (Eigen::Index k = 0; k < mpo_left; ++k)
+            left_boundary(m, k, m * mpo_left + k) = T(1);
+
+    Tensor3D<T> right_boundary(mps_right, mpo_right, right);
+    for (Eigen::Index k = 0; k < mpo_right; ++k)
+        for (Eigen::Index m = 0; m < mps_right; ++m)
+            right_boundary(m, k, m + mps_right * k) = T(1);
+
+    guess.shift_w(0);
+    return run_sweeps(guess.get_core(), mpo_cores, mps_cores, reltol, max_bond_dim, order, n_sweeps,
+                      ordering, left_boundary, right_boundary);
+}
+
+} // namespace detail
+
+// Typed optimizer with 1-site (order == 1) or 2-site sweeps. The result
+// keeps the common storage ordering and has its canonical center at site 0.
+//
+// Each boundary environment identifies the MPS and MPO bond pair with its
+// fused output slot. The left slot is mps_left * mpo_left_size + mpo_left.
+// The right slot is mps_right + mps_right_size * mpo_right. Either or both
+// ends may be dangling. The sweeps decompose internal bonds, preserving
+// the full external dimensions and the product basis.
+template<typename T>
+std::vector<Tensor3D<T>> optimize_dm_generic(
+    const MPS<T>& previous, const MPO<T>& mpo, const MPS<T>& mps,
+    typename Eigen::NumTraits<T>::Real reltol, int max_bond_dim, int order, int n_sweeps)
+{
+    detail::check_inputs(mpo, mps);
+    return detail::optimize_from_guess(previous, mpo, mps, reltol, max_bond_dim, order, n_sweeps);
+}
+
+// Reuse the input MPS as the guess when it already has the output shape.
+// Otherwise zip-up supplies a guess with the output physical and boundary dimensions.
+template<typename T>
+std::vector<Tensor3D<T>> optimize_dm_generic(
+    const MPO<T>& mpo, const MPS<T>& mps, typename Eigen::NumTraits<T>::Real reltol,
+    int max_bond_dim, int order, int n_sweeps)
+{
+    detail::check_inputs(mpo, mps);
+    const int ordering = mpo.get_ordering();
+    const auto& cores = mpo.get_core();
+    if (mpo.get_left_phys() == mpo.get_right_phys()
+        && detail::zip_up_core_dimensions(cores.front(), ordering)[0] == 1
+        && detail::zip_up_core_dimensions(cores.back(), ordering)[2] == 1)
+        return detail::optimize_from_guess(mps, mpo, mps, reltol, max_bond_dim, order, n_sweeps);
+
+    auto initial = zip_up::zip_up_mpo_mps(mpo, mps, reltol, max_bond_dim);
+    MPS<T> guess(std::move(initial), max_bond_dim, reltol, /*w=*/0, ordering);
+    return detail::optimize_from_guess(std::move(guess), mpo, mps, reltol, max_bond_dim, order, n_sweeps);
+}
+
+} // namespace optimized
 
 } // namespace TensorQuadOperation::utc

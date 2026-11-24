@@ -245,42 +245,21 @@ public:
             if (method == "zip-up")
                 core_out = utc::zip_up::zip_up_mpo_mps<T>(*this, other_mps, reltol, max_bond_dim);
             else if (method == "qrsvd")
-                core_out = utc::qrsvd_contract_mpo_mps<T>(this->core,
-                                                    other_mps.get_core());
-            else if (method == "optimize") {                                                       
-                if (previous != nullptr) {                                                         
-                    MPS<T> prev(*previous);                                                        
-                    prev.shift_w(0);                                                               
-                                                                                                    
-                    core_out = utc::optimize_dm_generic<T>(                                        
-                        prev.get_core(),                                                           
-                        this->core,                                                                
-                        other_mps.get_core(),                                                      
-                        reltol,                                                                    
-                        max_bond_dim,                                                              
-                        order,                                                                     
-                        n_sweeps);                                                                 
-                } else {                                                                           
-                    // other_mps was already canonicalized with shift_w(0).                        
-                    core_out = utc::optimize_dm_generic<T>(                                        
-                        other_mps.get_core(),                                                      
-                        this->core,                                                                
-                        other_mps.get_core(),                                                      
-                        reltol,                                                                    
-                        max_bond_dim,                                                              
-                        order,                                                                     
-                        n_sweeps);                                                                 
-                }                                                                                  
-            }                               
-                
-            else
+                core_out = utc::qrsvd::qrsvd_contract_mpo_mps<T>(*this, other_mps);
+            else if (method == "optimize") {
+                if (previous != nullptr)
+                    core_out = utc::optimized::optimize_dm_generic<T>(
+                        *previous, *this, other_mps, reltol, max_bond_dim, order, n_sweeps);
+                else
+                    core_out = utc::optimized::optimize_dm_generic<T>(
+                        *this, other_mps, reltol, max_bond_dim, order, n_sweeps);
+            } else
                 throw std::invalid_argument("MPO::_mul: method not recognized");
         }
         // At this point we have what we wanted core_out and we can discard all the rest
         int nBit_ = static_cast<int>(core_out.size());
         int w_ = (method != "optimize") ? nBit_ - 1 : 0;
-        const int result_ordering = method == "zip-up" ? this->get_ordering() : 1;
-        MPS<T> res(std::move(core_out), max_bond_dim, reltol, w_, result_ordering);
+        MPS<T> res(std::move(core_out), max_bond_dim, reltol, w_, this->get_ordering());
 
         // qrsvd's forward contraction is exact QR. Sweep all the way
         // back from the last site to site 0 with SVD compression so
