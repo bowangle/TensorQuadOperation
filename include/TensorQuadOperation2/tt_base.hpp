@@ -108,6 +108,7 @@ class TT{
 
     const VecTT& get_core() const { return core; }
     int get_w() const { return w; }
+    int get_ordering() const { return ordering; }
     int get_max_bond_dim() const { return max_bond_dim_param; }
     RealScalar get_reltol() const { return reltol_param; }
 
