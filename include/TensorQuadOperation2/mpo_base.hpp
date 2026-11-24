@@ -215,7 +215,6 @@ private:
     }
 
 public:
-    // TODO need to redo utc first
     // ---------------- MPO @ MPS -> MPS ----------------
     template<typename U>
     MPS<T> _mul(MPS<U> const& other,

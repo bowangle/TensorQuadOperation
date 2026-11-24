@@ -20,7 +20,7 @@ template<typename T> MPS<T> magic_tensor_product(const MPS<T>& mps);
 template<typename T> MPO<T> reshape_magic_res(const MPS<T>& result);
 
 namespace analytic_mps_construction {
-template<typename T> MPS<T> make_basis_mps(const std::vector<int>& bits);
+template<typename T> MPS<T> make_basis_mps(const std::vector<int>& bits, int ordering = 1);
 }
 
 // Matrix Product State with one physical leg per core.
