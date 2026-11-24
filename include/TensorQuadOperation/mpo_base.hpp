@@ -60,15 +60,14 @@ public:
           left_phys(left_phys_), right_phys(right_phys_)
     { _check_mpo_phys(); }
 
-    // Promote a TT (e.g. the result of mpo1 + mpo2) back into an MPO.
-    MPO(Base base, int left_phys_ = 2, int right_phys_ = 2)
-        : Base(std::move(base)), left_phys(left_phys_), right_phys(right_phys_)
+    // Promote a TT (e.g. the result of mpo1 + mpo2) or reinterpret an MPS
+    // in its existing storage ordering. Deducing Train keeps raw core
+    // vectors on the constructor that accepts bond limits and tolerance.
+    template<typename Train>
+        requires (std::is_same_v<Train, Base> || std::is_same_v<Train, MPS<T>>)
+    MPO(Train train, int left_phys_ = 2, int right_phys_ = 2)
+        : Base(std::move(train)), left_phys(left_phys_), right_phys(right_phys_)
     { _check_mpo_phys(); }
-
-    // Reinterpret an MPS as an MPO in its existing storage ordering.
-    MPO(MPS<T> mps, int left_phys_ = 2, int right_phys_ = 2)
-        : MPO(Base(std::move(mps)), left_phys_, right_phys_)
-    {}
 
     // =============================================================
     //                 MPO from MPS (diagonal operator)
