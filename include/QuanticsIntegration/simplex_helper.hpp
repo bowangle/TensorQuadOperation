@@ -1,7 +1,7 @@
 #pragma once
 
 #include "TensorQuadOperation/ttn_base.hpp"
-#include "TensorQuadOperation/utc.h"
+#include "TensorQuadOperation/utc.hpp"
 #include <QTgrid-quad/grid.h>
 
 #include <array>
@@ -14,27 +14,58 @@
 
 namespace QuanticsIntegration::simplex_helper {
 
+namespace detail {
+
+template<typename Scalar>
+void validate_train(const TensorQuadOperation::TT<Scalar>& values, int bits,
+                    Eigen::Index physical_dim, const char* operation, bool allow_open_right)
+{
+    const auto& cores = values.get_core();
+    const int ordering = values.get_ordering();
+    if (ordering < 0 || ordering > 2)
+        throw std::invalid_argument(std::string(operation) + ": ordering must be 0, 1 or 2");
+    if (bits <= 0 || cores.size() != static_cast<std::size_t>(bits))
+        throw std::invalid_argument(std::string(operation) +
+                                    ": train length must match the positive grid bit count");
+    const int left_axis = ordering == 0 ? 1 : 0;
+    const int right_axis = ordering == 2 ? 1 : 2;
+    Eigen::Index previous_right = 0;
+    for (std::size_t site = 0; site < cores.size(); ++site) {
+        const auto& core = cores[site];
+        const std::array<Eigen::Index, 3> shape{core.n_rows, core.n_cols, core.n_slices};
+        const auto left = shape[left_axis];
+        const auto right = shape[right_axis];
+        if (shape[ordering] != physical_dim || left <= 0 || right <= 0)
+            throw std::invalid_argument(std::string(operation) +
+                                        ": invalid core dimensions");
+        if ((site == 0 && left != 1) ||
+            (!allow_open_right && site + 1 == cores.size() && right != 1))
+            throw std::invalid_argument(std::string(operation) +
+                                        (allow_open_right ? ": left boundary bond must have dimension one"
+                                                          : ": boundary bonds must have dimension one"));
+        if (site > 0 && previous_right != left)
+            throw std::invalid_argument(std::string(operation) +
+                                        ": adjacent bond dimensions differ");
+        previous_right = right;
+    }
+}
+
+template<typename Scalar>
+void validate_branch_mpo(const TensorQuadOperation::MPO<Scalar>& branch, int bits,
+                         const char* operation)
+{
+    if (branch.get_left_phys() != 2 || branch.get_right_phys() != 2)
+        throw std::invalid_argument(std::string(operation) + ": expected a 2 x 2 branch MPO");
+    validate_train<Scalar>(branch, bits, 4, operation, /*allow_open_right=*/true);
+}
+
+} // namespace detail
+
 template<typename Scalar>
 void validate_simplex_mps(const TensorQuadOperation::MPS<Scalar>& values,
                           int bits, const char* operation, bool allow_open_right = false)
 {
-    const auto& cores = values.get_core();
-    if (bits <= 0 || cores.size() != static_cast<std::size_t>(bits))
-        throw std::invalid_argument(std::string(operation) +
-                                    ": MPS length must match the positive grid bit count");
-    if (cores.front().n_rows != 1 || (!allow_open_right && cores.back().n_slices != 1))
-        throw std::invalid_argument(std::string(operation) +
-                                    (allow_open_right ? ": MPS left boundary bond must have dimension one"
-                                                      : ": MPS boundary bonds must have dimension one"));
-    for (std::size_t site = 0; site < cores.size(); ++site) {
-        const auto& core = cores[site];
-        if (core.n_cols != 2 || core.n_rows <= 0 || core.n_slices <= 0)
-            throw std::invalid_argument(std::string(operation) +
-                                        ": invalid binary MPS core dimensions");
-        if (site > 0 && cores[site - 1].n_slices != core.n_rows)
-            throw std::invalid_argument(std::string(operation) +
-                                        ": adjacent MPS bond dimensions differ");
-    }
+    detail::validate_train<Scalar>(values, bits, 2, operation, allow_open_right);
 }
 
 template<typename Scalar>
@@ -145,26 +176,21 @@ TensorQuadOperation::MPO<Scalar> substract_branch(
     // MPO has leg (vk-1, (uk-1,uk-2))  = 2*(2*2)
 
     // MPS has a dangling leg (be carefull, get it from extract_branch)
-    const auto& subtractor_cores = std::as_const(subtractor).get_core();
-    const int bits = static_cast<int>(subtractor_cores.size());
+    const int bits = static_cast<int>(std::as_const(subtractor).get_core().size());
     validate_simplex_mps(branch, bits, "substract_branch", /*allow_open_right=*/true);
-    if (subtractor_cores.front().n_rows != 1 || subtractor_cores.back().n_slices != 1)
-        throw std::invalid_argument("substract_branch: subtractor boundary bonds must have dimension one");
-    for (std::size_t site = 0; site < subtractor_cores.size(); ++site) {
-        const auto& core = subtractor_cores[site];
-        if (core.n_cols != 8 || core.n_rows <= 0 || core.n_slices <= 0)
-            throw std::invalid_argument("substract_branch: invalid subtractor core dimensions");
-        if (site > 0 && subtractor_cores[site - 1].n_slices != core.n_rows)
-            throw std::invalid_argument("substract_branch: adjacent subtractor bond dimensions differ");
-    }
+    detail::validate_train(subtractor, bits, 8, "substract_branch subtractor", /*allow_open_right=*/false);
+    const int ordering = branch.get_ordering();
+    TensorQuadOperation::MPO<Scalar> subtractor_mpo(
+        TensorQuadOperation::TT<Scalar>::change_ordering(std::move(subtractor), ordering),
+        /*left_phys=*/4, /*right_phys=*/2);
 
     // Move the centres along internal bonds only, then contract without truncation.
     branch.shift_w(bits - 1);
-    subtractor.shift_w(bits - 1);
-    auto cores = TensorQuadOperation::utc::qrsvd_contract_mpo_mps(
-        subtractor_cores, std::as_const(branch).get_core());
+    subtractor_mpo.shift_w(bits - 1);
+    auto cores = TensorQuadOperation::utc::qrsvd::qrsvd_contract_mpo_mps(subtractor_mpo, branch);
     return TensorQuadOperation::MPO<Scalar>(std::move(cores), branch.get_max_bond_dim(),
-                                           branch.get_reltol(), /*w=*/-1);
+                                           branch.get_reltol(), /*w=*/-1,
+                                           /*left_phys=*/2, /*right_phys=*/2, ordering);
 }
 
 //  if kernel:
@@ -183,30 +209,34 @@ TensorQuadOperation::MPS<Scalar> init_integrate_branch(
 
     // if no kernel provided use kernel = MPS( the constant =1 function)
 
-    const auto& branch_cores = std::as_const(branch).get_core();
-    const int bits = static_cast<int>(branch_cores.size());
+    const int bits = static_cast<int>(std::as_const(branch).get_core().size());
     validate_simplex_mps(kernel, bits, "init_integrate_branch kernel");
-    validate_simplex_branch_mpo(branch_cores, "init_integrate_branch");
+    detail::validate_branch_mpo(branch, bits, "init_integrate_branch");
+    const int ordering = branch.get_ordering();
+    if (kernel.get_ordering() != ordering)
+        kernel = TensorQuadOperation::MPS<Scalar>(
+            TensorQuadOperation::TT<Scalar>::change_ordering(std::move(kernel), ordering));
 
     branch.shift_w(bits - 1);
     kernel.shift_w(bits - 1);
-    auto cores = TensorQuadOperation::utc::qrsvd_contract_mpo_mps(
-        branch_cores, std::as_const(kernel).get_core());
+    auto cores = TensorQuadOperation::utc::qrsvd::qrsvd_contract_mpo_mps(branch, kernel);
 
     // return an mps uN-1 with dangling leg (same as the one of the original mpo_N)
     return TensorQuadOperation::MPS<Scalar>(std::move(cores), branch.get_max_bond_dim(),
-                                           branch.get_reltol(), /*w=*/-1);
+                                           branch.get_reltol(), /*w=*/-1, ordering);
 }
 
 template<typename Scalar>
 TensorQuadOperation::MPS<Scalar> init_integrate_branch(TensorQuadOperation::MPO<Scalar> branch)
 {
-    xfac_quad::Tensor3D<Scalar> ones_core(1, 2, 1);
-    ones_core(0, 0, 0) = Scalar(1);
-    ones_core(0, 1, 0) = Scalar(1);
+    const int ordering = branch.get_ordering();
+    std::array<Eigen::Index, 3> shape{1, 1, 1};
+    shape[ordering] = 2;
+    xfac_quad::Tensor3D<Scalar> ones_core(shape[0], shape[1], shape[2]);
+    ones_core.data[0] = ones_core.data[1] = Scalar(1);
     std::vector<xfac_quad::Tensor3D<Scalar>> cores(std::as_const(branch).get_core().size(), ones_core);
     return init_integrate_branch(std::move(branch), TensorQuadOperation::MPS<Scalar>(
-        std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1, /*w=*/-1));
+        std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1, /*w=*/-1, ordering));
 }
 
 /// Compose the branch MPO with the diagonal kernel on the input time u_{k-1}.
@@ -218,31 +248,52 @@ TensorQuadOperation::MPO<Scalar> add_kernel_k_step(
 {
     const auto& branch_cores = branch.get_core();
     const auto& kernel_cores = kernel.get_core();
-    validate_simplex_mps(kernel, static_cast<int>(branch_cores.size()), "add_kernel_k_step kernel");
-    validate_simplex_branch_mpo(branch_cores, "add_kernel_k_step");
+    const int bits = static_cast<int>(branch_cores.size());
+    validate_simplex_mps(kernel, bits, "add_kernel_k_step kernel");
+    detail::validate_branch_mpo(branch, bits, "add_kernel_k_step");
+    const int ordering = branch.get_ordering();
+    const int kernel_ordering = kernel.get_ordering();
+    using TensorQuadOperation::utc::zip_up::detail::zip_up_core_dimensions;
+    using TensorQuadOperation::utc::zip_up::detail::zip_up_physical_slice;
 
     std::vector<xfac_quad::Tensor3D<Scalar>> cores;
     cores.reserve(branch_cores.size());
     for (std::size_t site = 0; site < branch_cores.size(); ++site) {
         const auto& branch_core = branch_cores[site];
         const auto& kernel_core = kernel_cores[site];
-        xfac_quad::Tensor3D<Scalar> core(branch_core.n_rows * kernel_core.n_rows, 4,
-                                        branch_core.n_slices * kernel_core.n_slices);
+        const auto branch_shape = zip_up_core_dimensions(branch_core, ordering);
+        const auto kernel_shape = zip_up_core_dimensions(kernel_core, kernel_ordering);
+        const auto left_size = branch_shape[0] * kernel_shape[0];
+        const auto right_size = branch_shape[2] * kernel_shape[2];
+        const std::array<Eigen::Index, 3> shape = ordering == 0
+            ? std::array<Eigen::Index, 3>{4, left_size, right_size}
+            : ordering == 1 ? std::array<Eigen::Index, 3>{left_size, 4, right_size}
+                            : std::array<Eigen::Index, 3>{left_size, right_size, 4};
+        xfac_quad::Tensor3D<Scalar> core(shape[0], shape[1], shape[2]);
 
         // In slot 2 * upper_bit + input_bit, the diagonal selects input_bit.
         for (Eigen::Index slot = 0; slot < 4; ++slot) {
-            const auto branch_slice = branch_core.col_as_mat_const(slot);
-            auto weighted_slice = core.col_as_mat(slot);
-            for (Eigen::Index right = 0; right < kernel_core.n_slices; ++right)
-                for (Eigen::Index left = 0; left < kernel_core.n_rows; ++left)
-                    weighted_slice.block(left * branch_core.n_rows, right * branch_core.n_slices,
-                                         branch_core.n_rows, branch_core.n_slices) =
-                        kernel_core(left, slot % 2, right) * branch_slice;
+            const auto branch_slice = zip_up_physical_slice(branch_core, ordering, slot);
+            const auto kernel_slice = zip_up_physical_slice(kernel_core, kernel_ordering, slot % 2);
+            const auto weight_slice = [&](auto weighted_slice) {
+                for (Eigen::Index right = 0; right < kernel_slice.cols(); ++right)
+                    for (Eigen::Index left = 0; left < kernel_slice.rows(); ++left)
+                        weighted_slice.block(left * branch_slice.rows(), right * branch_slice.cols(),
+                                             branch_slice.rows(), branch_slice.cols()) =
+                            kernel_slice(left, right) * branch_slice;
+            };
+            if (ordering == 0)
+                weight_slice(core.row_as_mat(slot));
+            else if (ordering == 1)
+                weight_slice(core.col_as_mat(slot));
+            else
+                weight_slice(core.slice(slot));
         }
         cores.push_back(std::move(core));
     }
     return TensorQuadOperation::MPO<Scalar>(std::move(cores), branch.get_max_bond_dim(),
-                                           branch.get_reltol(), /*w=*/-1);
+                                           branch.get_reltol(), /*w=*/-1,
+                                           branch.get_left_phys(), branch.get_right_phys(), ordering);
 }
 
 template<typename Scalar>

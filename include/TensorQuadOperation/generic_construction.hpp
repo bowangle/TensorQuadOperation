@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TensorQuadOperation/mps_base.h"
+#include "TensorQuadOperation/mps_base.hpp"
 
 #include <pi.h>
 #include <QTgrid-quad/grid.h>
@@ -19,13 +19,27 @@ namespace TensorQuadOperation::analytic_mps_construction {
 
 using xfac_quad::Tensor3D;
 
+namespace detail {
+
+// All constructors fill cores in (left, physical, right) storage.
+// Change the storage ordering once the cores are complete.
+template<typename Scalar>
+MPS<Scalar> make_ordered_mps(std::vector<Tensor3D<Scalar>> cores, int ordering)
+{
+    TT<Scalar> train(std::move(cores), /*max_bond_dim=*/0,
+                     /*reltol=*/-1, /*w=*/-1, /*ordering=*/1);
+    return MPS<Scalar>(TT<Scalar>::change_ordering(std::move(train), ordering));
+}
+
+} // namespace detail
+
 /// Construct the rank-one basis MPS that is one at the supplied bit string
 /// and zero at every other bit string. bits[k] selects the physical index
 /// of core k; bits[0] is the least-significant bit in the QTGrid convention.
-/// Scalar defaults to double and may also be complex. Returns only the MPS:
+/// Scalar may be real or complex. Returns only the MPS:
 /// a bit string does not specify a coordinate interval or grid.
-template<typename Scalar = double>
-MPS<Scalar> make_basis_mps(const std::vector<int>& bits)
+template<typename Scalar>
+MPS<Scalar> make_basis_mps(const std::vector<int>& bits, int ordering)
 {
     if (bits.empty()) {
         throw std::invalid_argument("make_basis_mps: bits must not be empty");
@@ -42,8 +56,7 @@ MPS<Scalar> make_basis_mps(const std::vector<int>& bits)
         cores.push_back(std::move(core));
     }
 
-    return MPS<Scalar>(std::move(cores), /*max_bond_dim=*/0,
-                       /*reltol=*/-1, /*w=*/-1);
+    return detail::make_ordered_mps(std::move(cores), ordering);
 }
 
 /// Construct a constant background with value point_value at the single
@@ -62,7 +75,8 @@ make_point_defect_mps(
     int nbit,
     typename Eigen::NumTraits<Scalar>::Real x0,
     Scalar background = Scalar(1),
-    Scalar point_value = Scalar(0))
+    Scalar point_value = Scalar(0),
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid = qtgrid::QTGrid<RealScalar, Sint>;
@@ -81,7 +95,7 @@ make_point_defect_mps(
     }
 
     if (background == Scalar(0)) {
-        auto mps = make_basis_mps<Scalar>(bits);
+        auto mps = make_basis_mps<Scalar>(bits, ordering);
         mps *= point_value;
         return {std::move(mps), std::move(grid)};
     }
@@ -114,9 +128,7 @@ make_point_defect_mps(
         cores.push_back(std::move(core));
     }
 
-    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
-                    /*reltol=*/-1, /*w=*/-1);
-    return {std::move(mps), std::move(grid)};
+    return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
 }
 
 /// Construct H(x-x0), or H(x0-x) when rev is true, as a rank-at-most-two MPS.
@@ -137,7 +149,8 @@ make_heaviside_mps(
     typename Eigen::NumTraits<Scalar>::Real x0,
     bool rev = false,
     bool fixed_to_left = false,
-    const std::string& discontinuity_mode = "one")
+    const std::string& discontinuity_mode = "one",
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid = qtgrid::QTGrid<RealScalar, Sint>;
@@ -230,9 +243,7 @@ make_heaviside_mps(
         cores.push_back(std::move(core));
     }
 
-    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
-                    /*reltol=*/-1, /*w=*/-1);
-    return {std::move(mps), std::move(grid)};
+    return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
 }
 
 /// Construct the exclusive unit-step kernel on [0,length): zero at the
@@ -242,12 +253,13 @@ template<typename Scalar = double, typename Sint = util::i128>
 std::pair<MPS<Scalar>, qtgrid::QTGrid<typename Eigen::NumTraits<Scalar>::Real, Sint>>
 make_exclusive_heaviside_mps(
     typename Eigen::NumTraits<Scalar>::Real length,
-    int nbit)
+    int nbit,
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     return make_heaviside_mps<Scalar, Sint>(
         RealScalar(0), length, nbit, RealScalar(0),
-        /*rev=*/false, /*fixed_to_left=*/false, "zero");
+        /*rev=*/false, /*fixed_to_left=*/false, "zero", ordering);
 }
 
 /// Construct a window H(x-x0) * H(x1-x), requiring x0 < x1.
@@ -269,7 +281,8 @@ make_step_mps(
     typename Eigen::NumTraits<Scalar>::Real x0,
     typename Eigen::NumTraits<Scalar>::Real x1,
     bool fixed_to_left = false,
-    const std::string& discontinuity_mode = "one")
+    const std::string& discontinuity_mode = "one",
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid = qtgrid::QTGrid<RealScalar, Sint>;
@@ -325,7 +338,7 @@ make_step_mps(
             core(0, 0, 0) = core(0, 1, 0) = bit == 0 ? value : Scalar(1);
             cores.push_back(std::move(core));
         }
-        return {MPS<Scalar>(std::move(cores), 0, -1, -1), std::move(grid)};
+        return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
     };
     if (end < Sint(0) || begin >= count) {
         return constant_result(Scalar(0));
@@ -335,11 +348,11 @@ make_step_mps(
     }
     if (begin < Sint(0)) {
         return make_heaviside_mps<Scalar, Sint>(
-            a, b, nbit, x1, /*rev=*/true, fixed_to_left, discontinuity_mode);
+            a, b, nbit, x1, /*rev=*/true, fixed_to_left, discontinuity_mode, ordering);
     }
     if (end >= count) {
         return make_heaviside_mps<Scalar, Sint>(
-            a, b, nbit, x0, /*rev=*/false, fixed_to_left, discontinuity_mode);
+            a, b, nbit, x0, /*rev=*/false, fixed_to_left, discontinuity_mode, ordering);
     }
     if (begin == end) {
         std::vector<int> bits(static_cast<std::size_t>(nbit));
@@ -347,7 +360,7 @@ make_step_mps(
             bits[static_cast<std::size_t>(bit)] =
                 static_cast<int>((begin >> bit) & Sint(1));
         }
-        auto mps = make_basis_mps<Scalar>(bits);
+        auto mps = make_basis_mps<Scalar>(bits, ordering);
         mps *= at_jump * at_jump;
         return {std::move(mps), std::move(grid)};
     }
@@ -392,9 +405,7 @@ make_step_mps(
         cores.push_back(std::move(core));
     }
 
-    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
-                    /*reltol=*/-1, /*w=*/-1);
-    return {std::move(mps), std::move(grid)};
+    return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
 }
 
 /// Construct rho * exp(x * phi) directly as a rank-one quantics MPS.
@@ -412,7 +423,8 @@ make_exp_mps(
     typename Eigen::NumTraits<Scalar>::Real b,
     int nbit,
     Scalar rho,
-    Scalar phi)
+    Scalar phi,
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid = qtgrid::QTGrid<RealScalar, Sint>;
@@ -441,9 +453,7 @@ make_exp_mps(
         }
     }
 
-    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
-                    /*reltol=*/-1, /*w=*/-1);
-    return {std::move(mps), std::move(grid)};
+    return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
 }
 
 /// Construct A * cos(B*x + C) directly as a quantics MPS of bond rank at
@@ -465,7 +475,8 @@ make_cos_mps(
     int nbit,
     Scalar A,
     Scalar B,
-    Scalar C)
+    Scalar C,
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid = qtgrid::QTGrid<RealScalar, Sint>;
@@ -516,9 +527,7 @@ make_cos_mps(
         }
     }
 
-    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
-                    /*reltol=*/-1, /*w=*/-1);
-    return {std::move(mps), std::move(grid)};
+    return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
 }
 
 /// Construct A * sin(B*x + C) by reusing make_cos_mps with phase C-pi/2.
@@ -531,11 +540,12 @@ make_sin_mps(
     int nbit,
     Scalar A,
     Scalar B,
-    Scalar C)
+    Scalar C,
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     const Scalar phase = C - Scalar(::pi<RealScalar>() / RealScalar(2));
-    return make_cos_mps<Scalar, Sint>(a, b, nbit, A, B, phase);
+    return make_cos_mps<Scalar, Sint>(a, b, nbit, A, B, phase, ordering);
 }
 
 /// Construct sum_{j=0}^p coefficients[j] * x^j as a quantics MPS.
@@ -553,7 +563,8 @@ make_polynomial_orderp_mps(
     typename Eigen::NumTraits<Scalar>::Real a,
     typename Eigen::NumTraits<Scalar>::Real b,
     int nbit,
-    const std::vector<Scalar>& coefficients)
+    const std::vector<Scalar>& coefficients,
+    int ordering = 1)
 {
     using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
     using Grid = qtgrid::QTGrid<RealScalar, Sint>;
@@ -629,9 +640,7 @@ make_polynomial_orderp_mps(
         }
     }
 
-    MPS<Scalar> mps(std::move(cores), /*max_bond_dim=*/0,
-                    /*reltol=*/-1, /*w=*/-1);
-    return {std::move(mps), std::move(grid)};
+    return {detail::make_ordered_mps(std::move(cores), ordering), std::move(grid)};
 }
 
 } // namespace TensorQuadOperation::analytic_mps_construction

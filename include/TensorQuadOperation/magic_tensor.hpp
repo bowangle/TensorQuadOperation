@@ -1,10 +1,11 @@
 #pragma once
 
-#include "TensorQuadOperation/tt_base.h"
-#include "TensorQuadOperation/mps_base.h"
-#include "TensorQuadOperation/mpo_base.h"
-#include "TensorQuadOperation/utc.h"
+#include "TensorQuadOperation/tt_base.hpp"
+#include "TensorQuadOperation/mps_base.hpp"
+#include "TensorQuadOperation/mpo_base.hpp"
+#include "TensorQuadOperation/utc.hpp"
 
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
@@ -12,20 +13,21 @@
 
 namespace TensorQuadOperation {
 
-// MPO may still be incomplete when reached through mpo_base.h -> mps_base.h.
+// MPO may still be incomplete when reached through mpo_base.hpp -> mps_base.hpp.
 // The dependent template definitions below are instantiated after it is defined.
 template<typename T>
 class MPO;
 
 /// Construct the reduced magic tensor Theta(m; n', m') = delta(m, n'+m')
-/// from Sec. 10.3, Eq. (116), of whocancompete.pdf as a TT.
+/// from Sec. 10.3, Eq. (116), of whocancompete.pdf as an MPS.
 ///
-/// Sites are ordered least-significant bit first. Each core has shape
-/// (carry_in, 8, carry_out), with internal carry dimensions two and boundary
-/// dimensions one. Both boundary carries are fixed to zero: additions that
-/// overflow nbit bits are rejected, not wrapped modulo 2^nbit.
+/// Sites are ordered least-significant bit first. Each core is built in
+/// ordering 1 with shape (carry_in, 8, carry_out), then moved to the
+/// requested storage ordering. Internal carry dimensions are two and
+/// boundary dimensions are one. Both boundary carries are fixed to zero:
+/// additions that overflow nbit bits are rejected, not wrapped modulo 2^nbit.
 ///
-/// Interpret this TT as a rectangular operator with input m' and output
+/// Interpret this MPS as a rectangular operator with input m' and output
 /// group n'*m, with n' fastest within that group. For each site:
 ///   output = n'_bit + 2*m_bit,
 ///   physical = 2*output + m'_bit.
@@ -34,9 +36,10 @@ class MPO;
 /// ready to be interpreted as an ordinary MPO with row m and column n'.
 ///
 /// The construction is exact, with no canonicalization, truncation, grid
-/// spacing, or quadrature weights applied. For nbit == 1 the core is (1,8,1).
+/// spacing, or quadrature weights applied. For nbit == 1 the ordering-1
+/// core has shape (1,8,1).
 template<typename Scalar>
-TT<Scalar> make_magic_tensor(int nbit)
+MPS<Scalar> make_magic_tensor(int nbit, int ordering = 1)
 {
     if (nbit <= 0) {
         throw std::invalid_argument("maek_magic_tensor: nbit must be positive");
@@ -69,14 +72,16 @@ TT<Scalar> make_magic_tensor(int nbit)
         cores.push_back(std::move(core));
     }
 
-    return TT<Scalar>(std::move(cores), /*max_bond_dim=*/0,
-                      /*reltol=*/-1, /*w=*/-1);
+    TT<Scalar> magic(std::move(cores), /*max_bond_dim=*/0,
+                     /*reltol=*/-1, /*w=*/-1, /*ordering=*/1);
+    return MPS<Scalar>(TT<Scalar>::change_ordering(std::move(magic), ordering));
 }
 
 /// Compute (m', n'*m) * (m') = (n'*m) using the magic addition tensor.
 /// The bit count is inferred from the input MPS's number of cores.
 /// The input must have binary cores in least-significant-bit-first order.
-/// The returned MPS has physical dimension four, fused as n'_bit+2*m_bit.
+/// The returned MPS keeps the input storage ordering and has physical
+/// dimension four, fused as n'_bit+2*m_bit.
 /// Its entries are sum_{m'} delta(m,n'+m') * mps(m'), i.e. mps(m-n')
 /// when m >= n', and zero otherwise (no periodic wraparound).
 ///
@@ -91,23 +96,28 @@ MPS<Scalar> magic_tensor_product(const MPS<Scalar>& mps)
     if (input_cores.empty()) {
         throw std::invalid_argument("magic_tensor_product: MPS must not be empty");
     }
+    const int ordering = mps.get_ordering();
+    if (ordering < 0 || ordering > 2) {
+        throw std::invalid_argument("magic_tensor_product: ordering must be 0, 1 or 2");
+    }
     const int nbit = static_cast<int>(input_cores.size());
     for (const auto& core : input_cores) {
-        if (core.n_cols != 2) {
+        const std::array<Eigen::Index, 3> shape{core.n_rows, core.n_cols, core.n_slices};
+        if (shape[ordering] != 2) {
             throw std::invalid_argument("magic_tensor_product: expected MPS physical dimension 2");
         }
     }
 
-    auto magic = make_magic_tensor<Scalar>(nbit);
+    MPO<Scalar> magic(make_magic_tensor<Scalar>(nbit, ordering), /*left_phys=*/4, /*right_phys=*/2);
     MPS<Scalar> canonical_mps(mps);
     magic.shift_w(0);
     canonical_mps.shift_w(0);
 
-    auto result_cores = utc::zip_up_mpo_mps<Scalar>(
-        magic.get_core(), canonical_mps.get_core(),
+    auto result_cores = utc::zip_up::zip_up_mpo_mps(
+        magic, canonical_mps,
         mps.get_reltol(), mps.get_max_bond_dim());
 
-    return MPS<Scalar>(std::move(result_cores), mps.get_max_bond_dim(), mps.get_reltol(), /*w=*/-1);
+    return MPS<Scalar>(std::move(result_cores), mps.get_max_bond_dim(), mps.get_reltol(), /*w=*/-1, ordering);
 }
 
 /// Interpret the (n'*m) MPS returned by magic_tensor_product as an MPO

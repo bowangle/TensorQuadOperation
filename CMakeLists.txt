@@ -74,15 +74,15 @@ if(TQ_BUILD_TESTS)
 
     foreach(_test IN LISTS _tq_tests)
         get_filename_component(_name "${_test}" NAME)
-        add_executable(tq_test_${_name} test/${_test}.cpp)
-        target_link_libraries(tq_test_${_name}
+        set(_target tq_test_${_name})
+        add_executable(${_target} test/${_test}.cpp)
+        target_link_libraries(${_target}
             PRIVATE tensorquad_deps tensorquad_testing)
-        target_compile_options(tq_test_${_name} PRIVATE
+        target_compile_options(${_target} PRIVATE
             -Wall -Wextra -Wreorder -Wshadow)
-        add_test(NAME tq_test_${_name}
-                 COMMAND tq_test_${_name})
+        add_test(NAME ${_target} COMMAND ${_target})
         # Shared fixtures and generated data remain relative to the project root.
-        set_tests_properties(tq_test_${_name} PROPERTIES
+        set_tests_properties(${_target} PROPERTIES
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     endforeach()
 endif()

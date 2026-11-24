@@ -9,3 +9,4 @@ ccache-*/
 
 # ignore test output
 test/**/test_*.txt
+test/**/test.txt

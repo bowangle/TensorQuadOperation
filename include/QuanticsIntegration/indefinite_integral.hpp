@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TensorQuadOperation/mpo_base.h"
+#include "TensorQuadOperation/mpo_base.hpp"
 
 #include <cstddef>
 #include <map>

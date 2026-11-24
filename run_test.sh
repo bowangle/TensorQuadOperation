@@ -4,6 +4,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 tensor_tests=(
+    test
     test_Mat_QR
     test_Mat_SVDDecomp
     test_Tensor3D

@@ -329,7 +329,8 @@ public:
 
             // assume you have the MPO object for now
             // TODO
-            const auto subtractor = TensorQuadOperation::make_magic_tensor<Scalar>(grid.get_nBits().back());
+            const auto subtractor = TensorQuadOperation::make_magic_tensor<Scalar>(
+                grid.get_nBits().back(), /*ordering=*/2);
 
             // if kernels not given construct the 1 MPS.
 

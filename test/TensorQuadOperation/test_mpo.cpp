@@ -1,8 +1,8 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include "type_int128.h"
-#include "TensorQuadOperation/mps_base.h"
-#include "TensorQuadOperation/mpo_base.h"
+#include "TensorQuadOperation/mps_base.hpp"
+#include "TensorQuadOperation/mpo_base.hpp"
 
 #include <xfac_quad_runner/xf-qd-runner.hpp>
 
