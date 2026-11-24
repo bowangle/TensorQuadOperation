@@ -1,9 +1,10 @@
 #pragma once
 
 #include <xfac_quad/cubemat_helper.h>
-#include "TensorQuadOperation/mat_decomp.h"   // SVDDecomp
+#include <xfac_quad/matrix/mat_decomp.h>
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <vector>
 
@@ -14,9 +15,47 @@
 //              optimize_dm_generic (with 1-site and 2-site sweeps).
 // TODO:        zip_up_mpo_mpo (stub, throws at runtime).
 // =====================================================================
+namespace TensorQuadOperation {
+template<typename T> class MPO;
+template<typename T> class MPS;
+}
+
 namespace TensorQuadOperation::utc {
 
 using xfac_quad::Tensor3D;
+
+namespace zip_up {
+
+namespace detail {
+
+template<typename T>
+std::array<Eigen::Index, 3> zip_up_core_dimensions(const Tensor3D<T>& core, int ordering)
+{
+    const std::array<Eigen::Index, 3> shape{core.n_rows, core.n_cols, core.n_slices};
+    return {shape[ordering == 0 ? 1 : 0], shape[ordering], shape[ordering == 2 ? 1 : 2]};
+}
+
+template<typename T>
+auto zip_up_physical_slice(const Tensor3D<T>& core, int ordering, Eigen::Index physical)
+    -> Eigen::Map<const typename Tensor3D<T>::MatrixX, 0, typename Tensor3D<T>::Stride_dim>
+{
+    if (ordering == 0) return core.row_as_mat_const(physical);
+    if (ordering == 1) return core.col_as_mat_const(physical);
+    using Stride = typename Tensor3D<T>::Stride_dim;
+    using Slice = Eigen::Map<const typename Tensor3D<T>::MatrixX, 0, Stride>;
+    const auto slice = core.slice_const(physical);
+    return Slice(slice.data(), slice.rows(), slice.cols(), Stride(slice.outerStride(), slice.innerStride()));
+}
+
+inline Eigen::Index zip_up_output_dimension(Eigen::Index fused, Eigen::Index input)
+{
+    if (input <= 0 || fused <= 0 || fused % input != 0)
+        throw std::invalid_argument(
+            "utc::zip_up_mpo_mps: MPO physical dimension must be a positive multiple of the MPS one");
+    return fused / input;
+}
+
+} // namespace detail
 
 // ---------------------------------------------------------------------
 // Helper for zip-up: the one-site contraction.
@@ -36,31 +75,32 @@ using xfac_quad::Tensor3D;
 //
 // Index conventions are chosen to line up with Tensor3D's column-major
 // layout: the row index (a fastest, row slower) is exactly
-// flatten_as_matrix2 of a Tensor3D(A, p_out, *), and the column index
+// flatten_as_matrix2 of a Tensor3D(A, p_out, *) in ordering 1, and the column index
 // (rM fastest, RO slower) is exactly flatten_as_matrix1 of a
-// Tensor3D(*, n_rM, n_RO). That lets the SVD factors be copied
-// straight into the output core / next environment with no reshuffle.
+// Tensor3D(*, n_rM, n_RO). The SVD right factor is copied directly into
+// the next environment. The left factor is written in the core's storage order.
 // ---------------------------------------------------------------------
 template<typename T>
 Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>
 _zip_up_site_matrix(Tensor3D<T> const& r,
                     Tensor3D<T> const& x,
-                    Tensor3D<T> const& o)
+                    Tensor3D<T> const& o,
+                    Eigen::Index p_in, Eigen::Index p_out, int ordering)
 {
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
+    if (ordering < 0 || ordering > 2)
+        throw std::invalid_argument("utc::zip_up_mpo_mps: ordering must be 0, 1 or 2");
+    const auto [x_left, x_physical, n_rM] = detail::zip_up_core_dimensions(x, ordering);
+    const auto [o_left, o_physical, n_RO] = detail::zip_up_core_dimensions(o, ordering);
     const Eigen::Index A     = r.n_rows;
-    const Eigen::Index l_dim = r.n_cols;      // MPS left bond (same as x.n_rows)
-    const Eigen::Index L     = r.n_slices;     // MPO left bond (same as o.n_rows)
-    const Eigen::Index p_in  = x.n_cols;      // MPS physical dim (2 for qubits)
-    const Eigen::Index p_out = o.n_cols / p_in;
-    const Eigen::Index n_rM  = x.n_slices;
-    const Eigen::Index n_RO  = o.n_slices;
+    const Eigen::Index l_dim = r.n_cols;   // MPS left bond
+    const Eigen::Index L     = r.n_slices; // MPO left bond
 
-    if (o.n_cols % p_in != 0)
+    if (x_physical != p_in || detail::zip_up_output_dimension(o_physical, p_in) != p_out)
         throw std::invalid_argument(
-            "utc::zip_up_mpo_mps: MPO physical dimension is not a multiple of the MPS one");
-    if (r.n_cols != x.n_rows || r.n_slices != o.n_rows)
+            "utc::zip_up_mpo_mps: MPO and MPS physical dimensions do not match the specified input and output");
+    if (l_dim != x_left || L != o_left)
         throw std::invalid_argument(
             "utc::zip_up_mpo_mps: bond dimension mismatch between environment and cores");
 
@@ -68,7 +108,7 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
     // Step 1:  r(A,l,L) * x(l,col,rM)  →  scatter directly into X_big
     //
     // Stack r.slice_const(Lidx) vertically into  Rstack(A*L, l).
-    // For each col: T = Rstack * x.col_as_mat_const(col)   (A·L, n_rM).
+    // For each col: T = Rstack * the MPS physical slice (A·L, n_rM).
     // Then scatter each column of T into X_big using CONTIGUOUS
     // segment copies — no element-by-element stride-penalty.
     // X_big ends up as (A·n_rM, L·p_in) column-major, ready for GEMM.
@@ -79,9 +119,9 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
 
     MatrixX X_big(A * n_rM, L * p_in);
     for (Eigen::Index col = 0; col < p_in; ++col) {
-        // Tmp = Rstack * x.col_as_mat_const(col)   (A·L, n_rM) — single GEMM
+        // Tmp = Rstack * the MPS physical slice (A·L, n_rM).
         MatrixX Tmp(A * L, n_rM);
-        Tmp.noalias() = Rstack * x.col_as_mat_const(col);
+        Tmp.noalias() = Rstack * detail::zip_up_physical_slice(x, ordering, col);
 
         // Scatter Tmp into X_big with contiguous segments.
         // Tmp(Lidx·A + a, rM)  →  X_big(rM·A + a, Lidx + col·L)
@@ -100,7 +140,7 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
     MatrixX MpoMat(L * p_in, p_out * n_RO);
     for (Eigen::Index col = 0; col < p_in; ++col) {
         for (Eigen::Index row = 0; row < p_out; ++row) {
-            auto o_slice = o.col_as_mat_const(row * p_in + col);   // (L, n_RO)
+            const auto o_slice = detail::zip_up_physical_slice(o, ordering, row * p_in + col);
             for (Eigen::Index RO = 0; RO < n_RO; ++RO)
                 MpoMat.col(row + RO * p_out).segment(col * L, L)
                     = o_slice.col(RO);
@@ -130,23 +170,52 @@ _zip_up_site_matrix(Tensor3D<T> const& r,
     return M;
 }
 
+// Ordering-1 entry point used by the existing raw-core contractions.
+template<typename T>
+Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>
+_zip_up_site_matrix(const Tensor3D<T>& r, const Tensor3D<T>& x, const Tensor3D<T>& o)
+{
+    return _zip_up_site_matrix(r, x, o, x.n_cols,
+                               detail::zip_up_output_dimension(o.n_cols, x.n_cols), 1);
+}
+
 // MPO @ MPS via the zip-up algorithm.
 // Assumes BOTH the MPO and the MPS are left-canonical.
 // Returns MPS cores with canonical center at the LAST site (n - 1):
 // all cores except the last are left-canonical (they come out of the
 // U factor of a truncated SVD), and the last core carries the weight.
 //
-// Boundary legs are carried through: the output left boundary is the
-// product l0*L0 of the two input left boundaries (a dummy identity
-// environment, as in the Python), the output right boundary is the
-// product of the two right boundaries, with the MPS leg fastest.
-// For the usual trivial boundaries all of these are 1.
+// Both output boundary sizes are products of the input boundary sizes.
+// The MPO index varies fastest on the left and the MPS index on the right.
+namespace detail {
+
+// The matrix packs the left bond fastest within each physical block of rows.
 template<typename T>
-std::vector<Tensor3D<T>> zip_up_mpo_mps(
+Tensor3D<T> zip_up_output_core(const typename Tensor3D<T>::MatrixX& matrix,
+                               Eigen::Index left, Eigen::Index physical, int ordering)
+{
+    const Eigen::Index right = matrix.cols();
+    if (ordering == 2)
+        return xfac_quad::matToCube_R(matrix, {left, right, physical}, 1);
+    if (ordering == 0) {
+        Tensor3D<T> core(physical, left, right);
+        for (Eigen::Index p = 0; p < physical; ++p)
+            core.row_as_mat(p) = matrix.middleRows(p * left, left);
+        return core;
+    }
+
+    Tensor3D<T> core(left, physical, right);
+    std::copy_n(matrix.data(), matrix.size(), core.data.begin());
+    return core;
+}
+
+// For the raw-core entry point, zero dimensions request per-site inference.
+template<typename T>
+std::vector<Tensor3D<T>> zip_up_mpo_mps_cores(
     std::vector<Tensor3D<T>> const& mpo,
     std::vector<Tensor3D<T>> const& mps,
-    typename Eigen::NumTraits<T>::Real reltol = 1e-12,
-    int max_bond_dim = 0)
+    int ordering, Eigen::Index input_dim, Eigen::Index output_dim,
+    typename Eigen::NumTraits<T>::Real reltol, int max_bond_dim)
 {
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
@@ -160,33 +229,42 @@ std::vector<Tensor3D<T>> zip_up_mpo_mps(
 
     // Dummy environment r(a, l, L) = delta(a, l*L0 + L)
     // (Python: eye(l0*L0).reshape(-1, l0, L0))
-    const Eigen::Index l0 = mps[0].n_rows;
-    const Eigen::Index L0 = mpo[0].n_rows;
+    const Eigen::Index l0 = zip_up_core_dimensions(mps.front(), ordering)[0];
+    const Eigen::Index L0 = zip_up_core_dimensions(mpo.front(), ordering)[0];
+    if (l0 <= 0 || L0 <= 0)
+        throw std::invalid_argument("utc::zip_up_mpo_mps: left bond dimensions must be positive");
     Tensor3D<T> r(l0 * L0, l0, L0);   // zero-initialized
     for (Eigen::Index l = 0; l < l0; ++l)
         for (Eigen::Index L = 0; L < L0; ++L)
             r(l * L0 + L, l, L) = T(1);
 
-    for (std::size_t i = 0; i + 1 < n; ++i) {
-        const Eigen::Index A     = r.n_rows;
-        const Eigen::Index p_out = mpo[i].n_cols / mps[i].n_cols;
-        const Eigen::Index n_rM  = mps[i].n_slices;
-        const Eigen::Index n_RO  = mpo[i].n_slices;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto mps_shape = zip_up_core_dimensions(mps[i], ordering);
+        const auto mpo_shape = zip_up_core_dimensions(mpo[i], ordering);
+        const Eigen::Index A = r.n_rows;
+        const Eigen::Index p_in = input_dim > 0 ? input_dim : mps_shape[1];
+        const Eigen::Index p_out = output_dim > 0 ? output_dim : zip_up_output_dimension(mpo_shape[1], p_in);
+        const Eigen::Index n_rM = mps_shape[2];
+        const Eigen::Index n_RO = mpo_shape[2];
+        if (n_rM <= 0 || n_RO <= 0)
+            throw std::invalid_argument("utc::zip_up_mpo_mps: right bond dimensions must be positive");
 
-        MatrixX M = _zip_up_site_matrix(r, mps[i], mpo[i]);
+        MatrixX M = _zip_up_site_matrix(r, mps[i], mpo[i], p_in, p_out, ordering);
+        if (i + 1 == n) {
+            // Last site: contract, no SVD — the whole matrix becomes the core.
+            res.push_back(zip_up_output_core<T>(M, A, p_out, ordering));
+            break;
+        }
 
         // Truncated SVD: left() = U (orthonormal columns),
         // right() = diag(s) * V^H, truncation handled internally.
-        SVDDecomp<T> svd(M, /*leftOrthogonal=*/true, reltol, max_bond_dim);
+        xfac_quad::SVDDecomp<T> svd(M, /*leftOrthogonal=*/true, reltol, max_bond_dim);
         const Eigen::Index chi = svd.s.size();
 
         MatrixX U  = svd.left();      // (A*p_out) x chi
         MatrixX R2 = svd.right();     // chi x (n_rM*n_RO)
 
-        // New core: Tensor3D(A, p_out, chi) with flatten_as_matrix2 == U
-        Tensor3D<T> core(A, p_out, chi);
-        std::copy(U.data(), U.data() + U.size(), core.data.begin());
-        res.push_back(std::move(core));
+        res.push_back(zip_up_output_core<T>(U, A, p_out, ordering));
 
         // Next environment: Tensor3D(chi, n_rM, n_RO) with
         // flatten_as_matrix1 == R2 (column index = rM + RO*n_rM,
@@ -195,22 +273,49 @@ std::vector<Tensor3D<T>> zip_up_mpo_mps(
         std::copy(R2.data(), R2.data() + R2.size(), r.data.begin());
     }
 
-    // Last site: contract, no SVD — the whole matrix becomes the core.
-    {
-        const Eigen::Index A     = r.n_rows;
-        const Eigen::Index p_out = mpo[n - 1].n_cols / mps[n - 1].n_cols;
-        const Eigen::Index n_rM  = mps[n - 1].n_slices;
-        const Eigen::Index n_RO  = mpo[n - 1].n_slices;
-
-        MatrixX M = _zip_up_site_matrix(r, mps[n - 1], mpo[n - 1]);
-
-        Tensor3D<T> core(A, p_out, n_rM * n_RO);
-        std::copy(M.data(), M.data() + M.size(), core.data.begin());
-        res.push_back(std::move(core));
-    }
-
     return res;
 }
+
+} // namespace detail
+
+// Raw-core entry point for tensors with (left, physical, right) storage.
+template<typename T>
+std::vector<Tensor3D<T>> zip_up_mpo_mps(
+    const std::vector<Tensor3D<T>>& mpo, const std::vector<Tensor3D<T>>& mps,
+    typename Eigen::NumTraits<T>::Real reltol = 1e-12, int max_bond_dim = 0)
+{
+    return detail::zip_up_mpo_mps_cores(mpo, mps, 1, 0, 0, reltol, max_bond_dim);
+}
+
+// Use the physical dimensions and shared storage ordering of the typed inputs.
+template<typename T>
+std::vector<Tensor3D<T>> zip_up_mpo_mps(
+    const MPO<T>& mpo, const MPS<T>& mps,
+    typename Eigen::NumTraits<T>::Real reltol = 1e-12, int max_bond_dim = 0)
+{
+    const int ordering = mpo.get_ordering();
+    if (ordering != mps.get_ordering())
+        throw std::invalid_argument("utc::zip_up_mpo_mps: MPO and MPS must have the same ordering");
+    if (ordering < 0 || ordering > 2)
+        throw std::invalid_argument("utc::zip_up_mpo_mps: ordering must be 0, 1 or 2");
+
+    return detail::zip_up_mpo_mps_cores(mpo.get_core(), mps.get_core(), ordering,
+                                       mpo.get_right_phys(), mpo.get_left_phys(), reltol, max_bond_dim);
+}
+
+// MPO @ MPO via the zip-up algorithm.
+// Returns MPO cores with canonical center at the LAST site (r - 1).
+template<typename T>
+std::vector<Tensor3D<T>> zip_up_mpo_mpo(
+    std::vector<Tensor3D<T>> const& /*mpo_a*/,
+    std::vector<Tensor3D<T>> const& /*mpo_b*/,
+    typename Eigen::NumTraits<T>::Real /*reltol*/,
+    int /*max_bond_dim*/)
+{
+    throw std::logic_error("TODO: utc::zip_up_mpo_mpo not implemented");
+}
+
+} // namespace zip_up
 
 // MPO @ MPS via exact contraction with QR re-orthogonalization.
 //
@@ -253,10 +358,10 @@ std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
         const Eigen::Index n_rM  = mps[i].n_slices;
         const Eigen::Index n_RO  = mpo[i].n_slices;
 
-        MatrixX M = _zip_up_site_matrix(r, mps[i], mpo[i]);
+        MatrixX M = zip_up::_zip_up_site_matrix(r, mps[i], mpo[i]);
 
         // Reduced QR: M = Q * R2, Q with orthonormal columns.
-        auto qr = MatQR<T>{}(M, /*left=*/true);
+        auto qr = xfac_quad::MatQR<T>{}(M, /*left=*/true);
         MatrixX& Q  = qr[0];      // (A*p_out) x k
         MatrixX& R2 = qr[1];      // k x (n_rM*n_RO)
         const Eigen::Index k = Q.cols();
@@ -279,7 +384,7 @@ std::vector<Tensor3D<T>> qrsvd_contract_mpo_mps(
         const Eigen::Index n_rM  = mps[n - 1].n_slices;
         const Eigen::Index n_RO  = mpo[n - 1].n_slices;
 
-        MatrixX M = _zip_up_site_matrix(r, mps[n - 1], mpo[n - 1]);
+        MatrixX M = zip_up::_zip_up_site_matrix(r, mps[n - 1], mpo[n - 1]);
 
         Tensor3D<T> core(A, p_out, n_rM * n_RO);
         std::copy(M.data(), M.data() + M.size(), core.data.begin());
@@ -527,7 +632,7 @@ std::vector<Tensor3D<T>> optimize_1site_pass(std::vector<Tensor3D<T>> const& z,
     envL.push_back(trivial_env<T>());
     for (int w = 0; w + 1 < r; ++w) {
         Tensor3D<T> Tw = local_1site(envL[w], m[w], k[w], envR[w + 1], Pz[w]);
-        auto qr = MatQR<T>{}(Tw.flatten_as_matrix2(), /*left=*/true);
+        auto qr = xfac_quad::MatQR<T>{}(Tw.flatten_as_matrix2(), /*left=*/true);
         MatrixX& Q = qr[0];                            // (nzl*Pz) x q
         Tensor3D<T> core(Tw.n_rows, Pz[w], Q.cols());
         std::copy(Q.data(), Q.data() + Q.size(), core.data.begin());
@@ -539,7 +644,7 @@ std::vector<Tensor3D<T>> optimize_1site_pass(std::vector<Tensor3D<T>> const& z,
     Tensor3D<T> curR = trivial_env<T>();
     for (int w = r - 1; w > 0; --w) {
         Tensor3D<T> Tw = local_1site(envL[w], m[w], k[w], curR, Pz[w]);
-        auto lq = MatQR<T>{}(Tw.flatten_as_matrix1(), /*left=*/false);
+        auto lq = xfac_quad::MatQR<T>{}(Tw.flatten_as_matrix1(), /*left=*/false);
         MatrixX& Q = lq[1];                            // q x (Pz*nzr), orthonormal rows
         Tensor3D<T> core(Q.rows(), Pz[w], Tw.n_slices);
         std::copy(Q.data(), Q.data() + Q.size(), core.data.begin());
@@ -576,7 +681,7 @@ std::vector<Tensor3D<T>> optimize_2site_pass(std::vector<Tensor3D<T>> const& z,
     for (int w = 0; w + 2 < r; ++w) {
         MatrixX M2 = local_2site(envL[w], m[w], k[w], m[w + 1], k[w + 1],
                                  envR[w + 2], Pz[w], Pz[w + 1]);
-        SVDDecomp<T> svd(M2, /*leftOrthogonal=*/true, reltol, max_bond_dim);
+        xfac_quad::SVDDecomp<T> svd(M2, /*leftOrthogonal=*/true, reltol, max_bond_dim);
         MatrixX U = svd.left();                        // (nzl*Pz0) x chi
         Tensor3D<T> core(envL[w].n_slices, Pz[w], U.cols());
         std::copy(U.data(), U.data() + U.size(), core.data.begin());
@@ -589,7 +694,7 @@ std::vector<Tensor3D<T>> optimize_2site_pass(std::vector<Tensor3D<T>> const& z,
         MatrixX M2 = local_2site(envL[w], m[w], k[w], m[w + 1], k[w + 1],
                                  curR, Pz[w], Pz[w + 1]);
         // leftOrthogonal=false: left() = U*S, right() = V^H
-        SVDDecomp<T> svd(M2, /*leftOrthogonal=*/false, reltol, max_bond_dim);
+        xfac_quad::SVDDecomp<T> svd(M2, /*leftOrthogonal=*/false, reltol, max_bond_dim);
         const Eigen::Index chi = svd.s.size();
 
         MatrixX VH = svd.right();                      // chi x (Pz1*nzr)
@@ -720,7 +825,7 @@ std::vector<Tensor3D<T>> optimize_dm_generic(
 
         // absorb the auxiliary site: res[0] is (1, N, chi0) == N x chi0
         MatrixX A = Eigen::Map<const MatrixX>(res[0].data.data(), N, res[0].n_slices);
-        SVDDecomp<T> svd(A, /*leftOrthogonal=*/true, reltol, max_mu);
+        xfac_quad::SVDDecomp<T> svd(A, /*leftOrthogonal=*/true, reltol, max_mu);
         MatrixX A2 = svd.left() * svd.right();                      // N x chi0
 
         MatrixX nf = A2 * res[1].flatten_as_matrix1();              // N x (P1*r1)
@@ -782,7 +887,7 @@ std::vector<Tensor3D<T>> optimize_dm_generic(
         // absorb the auxiliary site: res[-1] is (chi, N, 1) == chi x N
         auto const& lastres = res.back();
         MatrixX A = Eigen::Map<const MatrixX>(lastres.data.data(), lastres.n_rows, N);
-        SVDDecomp<T> svd(A, /*leftOrthogonal=*/true, reltol, max_mu);
+        xfac_quad::SVDDecomp<T> svd(A, /*leftOrthogonal=*/true, reltol, max_mu);
         MatrixX A2 = svd.left() * svd.right();                      // chi x N
 
         auto const& prev = res[res.size() - 2];
@@ -800,18 +905,6 @@ std::vector<Tensor3D<T>> optimize_dm_generic(
 
     throw std::invalid_argument(
         "utc::optimize_dm_generic: not implemented when both boundary sides are nontrivial");
-}
-
-// MPO @ MPO via the zip-up algorithm.
-// Returns MPO cores with canonical center at the LAST site (r - 1).
-template<typename T>
-std::vector<Tensor3D<T>> zip_up_mpo_mpo(
-    std::vector<Tensor3D<T>> const& /*mpo_a*/,
-    std::vector<Tensor3D<T>> const& /*mpo_b*/,
-    typename Eigen::NumTraits<T>::Real /*reltol*/,
-    int /*max_bond_dim*/)
-{
-    throw std::logic_error("TODO: utc::zip_up_mpo_mpo not implemented");
 }
 
 } // namespace TensorQuadOperation::utc

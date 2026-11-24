@@ -2,7 +2,7 @@
 
 #include "TensorQuadOperation2/tt_base.hpp"
 #include "TensorQuadOperation2/mps_base.hpp"
-#include "TensorQuadOperation/utc.h"
+#include "TensorQuadOperation2/utc.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,6 +26,8 @@ class MPO : public TT<T> {
     int right_phys;
 
 public:
+    int get_left_phys() const { return left_phys; }
+    int get_right_phys() const { return right_phys; }
 
     void _check_mpo_phys() const {
         if (left_phys <= 0 || right_phys <= 0)
@@ -241,8 +243,7 @@ public:
             // Looser of the two tolerances
             
             if (method == "zip-up")
-                core_out = utc::zip_up_mpo_mps<T>(this->core, other_mps.get_core(),
-                                            reltol, max_bond_dim);
+                core_out = utc::zip_up::zip_up_mpo_mps<T>(*this, other_mps, reltol, max_bond_dim);
             else if (method == "qrsvd")
                 core_out = utc::qrsvd_contract_mpo_mps<T>(this->core,
                                                     other_mps.get_core());
@@ -278,7 +279,8 @@ public:
         // At this point we have what we wanted core_out and we can discard all the rest
         int nBit_ = static_cast<int>(core_out.size());
         int w_ = (method != "optimize") ? nBit_ - 1 : 0;
-        MPS<T> res(std::move(core_out), max_bond_dim, reltol, w_);
+        const int result_ordering = method == "zip-up" ? this->get_ordering() : 1;
+        MPS<T> res(std::move(core_out), max_bond_dim, reltol, w_, result_ordering);
 
         // qrsvd's forward contraction is exact QR. Sweep all the way
         // back from the last site to site 0 with SVD compression so
@@ -318,7 +320,7 @@ public:
     //     RealScalar reltol   = std::max(this->get_reltol(), other.get_reltol());
     //     int max_bond_dim    = _merged_max_bond_dim(other);
 
-    //     res.core = utc::zip_up_mpo_mpo<T>(this->core, res.core,
+    //     res.core = utc::zip_up::zip_up_mpo_mpo<T>(this->core, res.core,
     //                                       reltol, max_bond_dim);
     //     res.nBit = static_cast<int>(res.core.size());
     //     res.w    = res.nBit - 1;
