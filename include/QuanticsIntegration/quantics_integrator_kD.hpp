@@ -1,6 +1,7 @@
 #pragma once
 #include "TensorQuadOperation/ttn_base.hpp"
 #include "QuanticsIntegration/quantics_integrator.hpp"
+#include "QuanticsIntegration/simplex_helper.hpp"
 #include "TensorQuadOperation/generic_construction.hpp"
 #include <type_int128.h>
 #include <xfac_quad_runner/xf-qd-runner.hpp>
@@ -321,20 +322,53 @@ public:
         RealScalar reltol = RealScalar(-1),
         bool final_compress = true){
 
-            // validation of grids parameter
+            // parameter validation
+            simplex_helper::validation_simplex_parameter(values, grid, kernels, kernel_grid);
 
             // construction substractor MPO object
 
+            // assume you have the MPO object for now
+            // TODO
+            const auto subtractor = TensorQuadOperation::make_magic_tensor<Scalar>(grid.get_nBits().back());
+
             // if kernels not given construct the 1 MPS.
 
-            // first branch:
-            //      most left branch: multiply MPS (2 leg dim), MPO(vk=2, uk|uk-1=4)(fuse uk and uk-1 together) -> MPS(leg uk|uk-1)
-            //      rewrite to MPO uk, uk-1
-            //      multiply MPO MPS with: 
-            //      if kernel multiply by kernel_mps
-            //      if no kernel multiply by the mps=1 everywhere.
-            // end with MPS(uk=2)
+            // first branch: v1, ..., vN-1, vN (N branch)-> v1, ..., vN-1, uN-1 (N branch)
+            //      vN branch (MPS_N)(vN=2 leg dim) * substractor MPO ((vN, (uN,uN-1))=2*(2*2) leg dim)
+            //      -> MPS_N((uN,uN-1)=(2*2) leg dim)
+            //      convert to MPO_N (uN*uN-1=2*2 leg dim)
+            //      if kernel:
+            //          MPO_N(uN*uN-1=2*2 leg dim) * MPS_kernel(uN=2 leg dim)
+            //      if no kernel:
+            //          MPO_N(uN*uN-1=2*2 leg dim) * MPS=1 everywhere (uN=2 leg dim)
+            // end with MPS_N(uN-1=2)
 
+            // impl: extract branch, call substract branch, call init_integrate_branch.
+            // first branch provide message: MPS_uN-1
+            auto working_tree = values;
+            const int last_branch = grid.get_dim() - 1;
+            auto gap_branch = working_tree._extract_branch(last_branch, /*compress=*/false);
+            auto gap_mpo = simplex_helper::substract_branch(std::move(gap_branch), subtractor);
+            auto message = kernels.empty()
+                ? simplex_helper::init_integrate_branch(std::move(gap_mpo))
+                : simplex_helper::init_integrate_branch(std::move(gap_mpo), kernels.back());
+            working_tree._insert_branch(last_branch, std::move(message), /*original_w=*/-1, /*compress=*/false);
+
+            // every other iteration: v1, ...,vk-2, vk-1, uk-1 (k branch)-> v1, ..., vk-2, uk-2 (k-1 branch)
+            //      vk-1 branch (MPS_k-1)(vk-1=2 leg dim) * substractor MPO ((vk-1, (uk-1,uk-2))=2*(2*2) leg dim)
+            //      -> MPS_k-1((uk-1,uk-2)=(2*2) leg dim)
+            //      convert to MPO_k-1 (uk-1*uk-2=2*2 leg dim)
+            //      if kernel:
+            //          MPO_k-1(uk-1*uk-2=2*2 leg dim) * MPO_diag_kernel(uk-1*uk-1=2*2 leg dim)
+            //      (Nothing to do in the absence of kernel)
+            //      In any case:
+            //      -> MPO_k-1 (uk-1*uk-2=2*2 leg dim)
+
+            //      and now do the big contraction: (don't forget the dangling leg on each that connect to an R tensor)
+            //      (the R tensor can be done at the very end)
+            //      MPO_k-1(uk-1*uk-2=2*2 leg dim)* MPS_k(uk-1=2 leg dim)
+            //      -> MPS_k-1 (uk-2=2)
+            // Done (we got ride of the k branch as well)
             
         }
 
@@ -343,7 +377,8 @@ public:
     [[nodiscard]] static Scalar integrate_simplex(
         const State& simplex_values, const Grid& grid, const RealScalar& t)
     {
-        validate_simplex_mps(simplex_values, grid);
+        simplex_helper::validate_simplex_mps(simplex_values, grid.get_nBits(),
+                                             "QuanticsIntegrator_kD::integrate_simplex");
         return simplex_values.eval(simplex_sample_id(grid, t));
     }
 
@@ -352,7 +387,8 @@ public:
         const State& simplex_values, const Grid& grid,
         const std::vector<RealScalar>& times)
     {
-        validate_simplex_mps(simplex_values, grid);
+        simplex_helper::validate_simplex_mps(simplex_values, grid.get_nBits(),
+                                             "QuanticsIntegrator_kD::integrate_simplex");
         // Validate and convert every time before eval_list enters its OpenMP loop.
         std::vector<std::vector<int>> ids;
         ids.reserve(times.size());
@@ -365,22 +401,6 @@ private:
     // ======================================================================
     // Helpers
     // ======================================================================
-
-    static void validate_simplex_mps(const State& simplex_values, const Grid& grid)
-    {
-        const auto& cores = simplex_values.get_core();
-        if (cores.empty() || cores.size() != static_cast<std::size_t>(grid.get_nBits()))
-            throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: MPS length must match the positive grid bit count");
-        if (cores.front().n_rows != 1 || cores.back().n_slices != 1)
-            throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: MPS boundary bonds must have dimension one");
-        for (std::size_t site = 0; site < cores.size(); ++site) {
-            const auto& core = cores[site];
-            if (core.n_cols != 2 || core.n_rows <= 0 || core.n_slices <= 0)
-                throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: invalid binary MPS core dimensions");
-            if (site > 0 && cores[site - 1].n_slices != core.n_rows)
-                throw std::invalid_argument("QuanticsIntegrator_kD::integrate_simplex: adjacent MPS bond dimensions differ");
-        }
-    }
 
     static std::vector<int> simplex_sample_id(const Grid& grid, const RealScalar& t)
     {

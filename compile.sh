@@ -14,6 +14,9 @@ cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" \
     -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
 # Build everything
-cmake --build "$BUILD_DIR" -j 1
+if (( $# == 0 )); then
+    set -- -j 1
+fi
+cmake --build "$BUILD_DIR" "$@"
 
 cat build/CMakeCache.txt | grep CMAKE_CXX_COMPILER
