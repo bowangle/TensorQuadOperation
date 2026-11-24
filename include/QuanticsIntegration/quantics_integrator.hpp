@@ -1,7 +1,7 @@
 #pragma once
 
 #include "QuanticsIntegration/indefinite_integral.hpp"
-#include "TensorQuadOperation/mpo_base.h"
+#include "TensorQuadOperation/mpo_base.hpp"
 
 #include <type_int128.h>
 #include <xfac_quad_runner/xf-qd-runner.hpp>

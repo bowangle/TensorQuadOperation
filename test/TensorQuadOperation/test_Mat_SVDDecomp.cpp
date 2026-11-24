@@ -1,6 +1,6 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
-#include "TensorQuadOperation/mat_decomp.h"
+#include <xfac_quad/matrix/mat_decomp.h>
 #include <Eigen/Dense>
 #include <array>
 #include <iostream>
@@ -16,8 +16,8 @@
 #include <boost/random/uniform_real_distribution.hpp>
 
 
-using TensorQuadOperation::MatSVDFixedTol;
-using TensorQuadOperation::SVDDecomp;
+using xfac_quad::MatSVDFixedTol;
+using xfac_quad::SVDDecomp;
 
 using float128  = boost::multiprecision::float128;
 using Cfloat128 = std::complex<float128>;

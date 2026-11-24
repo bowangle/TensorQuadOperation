@@ -1,6 +1,6 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
-#include "TensorQuadOperation/tt_base.h"
+#include "TensorQuadOperation/tt_base.hpp"
 #include <iostream>
 #include <string>
 #include <chrono>

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "TensorQuadOperation2/tt_base.hpp"
-#include "TensorQuadOperation2/mps_base.hpp"
-#include "TensorQuadOperation2/utc.hpp"
+#include "TensorQuadOperation/tt_base.hpp"
+#include "TensorQuadOperation/mps_base.hpp"
+#include "TensorQuadOperation/utc.hpp"
 
 #include <algorithm>
 #include <array>

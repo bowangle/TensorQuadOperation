@@ -1,6 +1,6 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
-#include "TensorQuadOperation/mat_decomp.h"
+#include <xfac_quad/matrix/mat_decomp.h>
 #include <Eigen/Dense>
 #include <array>
 #include <iostream>
@@ -15,7 +15,7 @@
 #include <boost/random.hpp>
 #include <boost/random/uniform_real_distribution.hpp>
 
-using TensorQuadOperation::MatQR;
+using xfac_quad::MatQR;
 
 template<class Scalar>
 using MatX = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;   // col-major

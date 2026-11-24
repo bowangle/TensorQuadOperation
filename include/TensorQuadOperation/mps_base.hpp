@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TensorQuadOperation2/tt_base.hpp"
+#include "TensorQuadOperation/tt_base.hpp"
 #include <Eigen/Core>
 #include <type_int128.h>
 #include <xfac_quad/cubemat_helper.h>
@@ -147,6 +147,9 @@ public:
     /// Causal discrete convolution: result[m] = sum_{j=0}^m
     /// (*this)[j] * kernel[m-j], without conjugation or periodic wraparound.
     /// Both MPSs must have the same nonzero number of binary, LSB-first cores.
+    /// Both must use the same storage ordering, which the result preserves.
+    /// Zip-up fuses the signal and kernel boundary bonds at each end,
+    /// keeping them open with dimension equal to the product of input sizes.
     /// The output retains that bit count (overflow is discarded).
     /// No grid spacing or quadrature weights are applied; neither input changes.
     /// max_bond_dim and reltol override both inputs' stored settings at every
@@ -158,12 +161,20 @@ public:
              RealScalar reltol = RealScalar(-1),
              bool final_compress = true)
     {
+        const int order = this->ordering;
+        if (order != kernel.ordering) {
+            throw std::invalid_argument("MPS::conv: MPSs must have the same ordering");
+        }
+        if (order < 0 || order > 2) {
+            throw std::invalid_argument("MPS::conv: ordering must be 0, 1 or 2");
+        }
         if (this->core.empty() || this->core.size() != kernel.get_core().size()) {
             throw std::invalid_argument(
                 "MPS::conv: expected nonempty MPSs of the same length");
         }
         for (const auto& tensor : this->core) {
-            if (tensor.n_cols != 2) {
+            const std::array<Eigen::Index, 3> shape{tensor.n_rows, tensor.n_cols, tensor.n_slices};
+            if (shape[order] != 2) {
                 throw std::invalid_argument(
                     "MPS::conv: expected signal physical dimension 2");
             }
@@ -193,6 +204,7 @@ public:
     /// padding, without periodic wraparound. Uses a basis-MPS convolution
     /// kernel at nb_grid_point, encoded least-significant bit first.
     /// Negative shifts are rejected; shifts beyond the grid return zero.
+    /// The result keeps the original storage ordering and boundary dimensions.
     /// The original MPS is not modified. Its stored bond cap and tolerance
     /// are forwarded to conv, including the final compression sweep.
     MPS neg_translation(util::i128 nb_grid_point)
@@ -204,8 +216,13 @@ public:
         if (this->core.empty()) {
             throw std::invalid_argument("MPS::neg_translation: MPS must not be empty");
         }
+        const int order = this->ordering;
+        if (order < 0 || order > 2) {
+            throw std::invalid_argument("MPS::neg_translation: ordering must be 0, 1 or 2");
+        }
         for (const auto& tensor : this->core) {
-            if (tensor.n_cols != 2) {
+            const std::array<Eigen::Index, 3> shape{tensor.n_rows, tensor.n_cols, tensor.n_slices};
+            if (shape[order] != 2) {
                 throw std::invalid_argument(
                     "MPS::neg_translation: expected physical dimension 2");
             }
@@ -218,14 +235,31 @@ public:
             remaining >>= 1;
         }
         if (remaining != 0) {
-            MPS zero(*this);
-            zero *= T(0);
-            return zero;
+            const int left_axis = order == 0 ? 1 : 0;
+            const int right_axis = order == 2 ? 1 : 2;
+            const auto& first = this->core.front();
+            const auto& last = this->core.back();
+            const Eigen::Index left = order == 0 ? first.n_cols : first.n_rows;
+            const Eigen::Index right = order == 2 ? last.n_cols : last.n_slices;
+
+            VecTT zero_cores;
+            zero_cores.reserve(bits.size());
+            for (std::size_t site = 0; site < bits.size(); ++site) {
+                std::array<Eigen::Index, 3> shape{1, 1, 1};
+                shape[order] = 2;
+                shape[left_axis] = site == 0 ? left : 1;
+                shape[right_axis] = site + 1 == bits.size() ? right : 1;
+                zero_cores.emplace_back(shape[0], shape[1], shape[2]);
+            }
+            return MPS(std::move(zero_cores), this->get_max_bond_dim(), this->get_reltol(), /*w=*/-1, order);
         }
 
-        const auto kernel = analytic_mps_construction::make_basis_mps<T>(bits);
+        const auto kernel = analytic_mps_construction::make_basis_mps<T>(bits, order);
         return conv(kernel, this->get_max_bond_dim(), this->get_reltol());
     }
 };
 
 } // namespace TensorQuadOperation
+
+#include "TensorQuadOperation/magic_tensor.hpp"
+#include "TensorQuadOperation/generic_construction.hpp"

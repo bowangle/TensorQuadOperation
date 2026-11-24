@@ -1,7 +1,7 @@
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include "type_int128.h"
-#include "TensorQuadOperation/tt_base.h"
+#include "TensorQuadOperation/tt_base.hpp"
 
 #include <xfac_quad_runner/xf-qd-runner.hpp>
 
