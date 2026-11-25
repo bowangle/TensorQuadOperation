@@ -20,6 +20,7 @@ integration_tests=(
     test_indefinite_integral
     test_quantics_integrator
     test_quantics_integrator_kD
+    test_simplex_integration
 )
 
 pids=()

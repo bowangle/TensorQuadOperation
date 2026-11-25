@@ -70,7 +70,8 @@ if(TQ_BUILD_TESTS)
         TensorQuadOperation/test_convolution
         QuanticsIntegration/test_quantics_integrator
         QuanticsIntegration/test_quantics_integrator_kD
-        QuanticsIntegration/test_indefinite_integral)
+        QuanticsIntegration/test_indefinite_integral
+        QuanticsIntegration/test_simplex_integration)
 
     foreach(_test IN LISTS _tq_tests)
         get_filename_component(_name "${_test}" NAME)
