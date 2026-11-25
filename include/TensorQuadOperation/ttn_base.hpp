@@ -371,19 +371,27 @@ public:
     /// to the attachment.
     MPS<T> _extract_branch(int branch_id, bool compress)
     {
+        _branch_axes(branch_id); // Validate before moving the tree centre.
+        const auto& branch = ttn_body.tree.branches->at(branch_id);
+        move_canonical_center(branch.nodes.back(), compress);
+        auto result = _copy_branch(branch_id);
+        // The tree centre move already made the branch canonical at its last site.
+        result.w = static_cast<int>(branch.nodes.size()) - 1;
+        return result;
+    }
+
+    /// Copy a branch in leaf-to-endpoint order without changing the tree.
+    /// The MPS uses ordering 2 and retains the open right attachment bond in
+    /// its current gauge. No canonical centre is assigned to the copy.
+    MPS<T> _copy_branch(int branch_id) const
+    {
         const auto axes = _branch_axes(branch_id);
         const auto& branch = ttn_body.tree.branches->at(branch_id);
-        // 1: move canonical center of the tree in the branch root (updates TTN::w)
-        move_canonical_center(branch.nodes.back(), compress);
-        // 2: extract the branch mps from it and set it's canonical center 
-        //    (have an additional dangling leg on the side)
         VecTT cores;
         cores.reserve(branch.nodes.size());
         for (std::size_t i = 0; i < branch.nodes.size(); ++i)
             cores.push_back(_copy_branch_core(ttn_body.M.at(branch.nodes[i]), axes[i][0]));
-        // 3 : return the branch mps
-        return MPS<T>(std::move(cores), max_bond_dim, reltol,
-                      static_cast<int>(branch.nodes.size()) - 1, /*ordering=*/2);
+        return MPS<T>(std::move(cores), max_bond_dim, reltol, /*w=*/-1, /*ordering=*/2);
     }
 
     /// Replace a branch with an MPS, then restore original_w using compress.

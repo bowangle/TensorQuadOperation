@@ -14,6 +14,7 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -312,6 +313,10 @@ public:
     /// perform SimplexIntegration with or without (kernels,kernel_grid) (optional)
     /// We thus construct an mps with the tree convention.
     /// convert to MPS and return it with grid (save it with grid if path given)
+    /// Multi-branch weights are not supported yet; a single branch may use a kernel.
+    /// The returned MPS already includes quadrature scaling. If save_prefix is
+    /// nonempty, save <save_prefix>.tt and the time grid JSON files.
+    /// An optional logger prints the working tree before and after each simplex step.
     static std::pair<State, Grid> make_integration_simplex(
         const mState& values,
         const mGrid& grid,
@@ -320,40 +325,30 @@ public:
         const std::string& save_prefix,
         int max_bond_dim = 0,
         RealScalar reltol = RealScalar(-1),
-        bool final_compress = true){
+        bool final_compress = true,
+        std::shared_ptr<spdlog::logger> simplex_logger = nullptr){
 
             // parameter validation
-            simplex_helper::validation_simplex_parameter(values, grid, kernels, kernel_grid);
-
-            // construction substractor MPO object
-
-            // assume you have the MPO object for now
-            // TODO
-            const auto subtractor = TensorQuadOperation::make_magic_tensor<Scalar>(
-                grid.get_nBits().back(), /*ordering=*/2);
+            simplex_helper::validation::validation_simplex_parameter(values, grid, kernels, kernel_grid);
+            if (!kernels.empty() && grid.get_dim() > 1)
+                throw std::invalid_argument("QuanticsIntegrator_kD::make_integration_simplex: multi-branch kernels are not supported yet");
 
             // if kernels not given construct the 1 MPS.
 
-            // first branch: v1, ..., vN-1, vN (N branch)-> v1, ..., vN-1, uN-1 (N branch)
-            //      vN branch (MPS_N)(vN=2 leg dim) * substractor MPO ((vN, (uN,uN-1))=2*(2*2) leg dim)
-            //      -> MPS_N((uN,uN-1)=(2*2) leg dim)
-            //      convert to MPO_N (uN*uN-1=2*2 leg dim)
-            //      if kernel:
-            //          MPO_N(uN*uN-1=2*2 leg dim) * MPS_kernel(uN=2 leg dim)
-            //      if no kernel:
-            //          MPO_N(uN*uN-1=2*2 leg dim) * MPS=1 everywhere (uN=2 leg dim)
-            // end with MPS_N(uN-1=2)
+            mState working_tree(values.get_TTN_body(), max_bond_dim, reltol, /*w=*/-1);
+            const auto log_tree = [&](const char* phase, const char* step, int branch_id) {
+                if (!simplex_logger || !simplex_logger->should_log(spdlog::level::info))
+                    return;
+                std::ostringstream diagram;
+                working_tree.get_TTN_body().tree.print(diagram);
+                simplex_logger->info("Simplex: {} {} (branch {}):\n{}", phase, step, branch_id, diagram.str());
+            };
 
-            // impl: extract branch, call substract branch, call init_integrate_branch.
-            // first branch provide message: MPS_uN-1
-            auto working_tree = values;
+            // first step(last branch): from (v_1, ..., v_{N-1}, v_N) to (v_1, ..., v_{N-1}, u_{N-1}):
             const int last_branch = grid.get_dim() - 1;
-            auto gap_branch = working_tree._extract_branch(last_branch, /*compress=*/false);
-            auto gap_mpo = simplex_helper::substract_branch(std::move(gap_branch), subtractor);
-            auto message = kernels.empty()
-                ? simplex_helper::init_integrate_branch(std::move(gap_mpo))
-                : simplex_helper::init_integrate_branch(std::move(gap_mpo), kernels.back());
-            working_tree._insert_branch(last_branch, std::move(message), /*original_w=*/-1, /*compress=*/false);
+            log_tree("before", "_init_integrate_branch", last_branch);
+            simplex_helper::_init_integrate_branch(working_tree, grid, kernels.empty() ? nullptr : &kernels.back());
+            log_tree("after", "_init_integrate_branch", last_branch);
 
             // every other iteration: v1, ...,vk-2, vk-1, uk-1 (k branch)-> v1, ..., vk-2, uk-2 (k-1 branch)
             //      vk-1 branch (MPS_k-1)(vk-1=2 leg dim) * substractor MPO ((vk-1, (uk-1,uk-2))=2*(2*2) leg dim)
@@ -370,7 +365,23 @@ public:
             //      MPO_k-1(uk-1*uk-2=2*2 leg dim)* MPS_k(uk-1=2 leg dim)
             //      -> MPS_k-1 (uk-2=2)
             // Done (we got ride of the k branch as well)
-            
+            for (int branch_k = last_branch; branch_k > 0; --branch_k)
+            {
+                log_tree("before", "_integrate_k_branch", branch_k);
+                simplex_helper::_integrate_k_branch(working_tree, grid, branch_k);
+                log_tree("after", "_integrate_k_branch", branch_k);
+            }
+                
+            auto result = working_tree._copy_branch(0);
+            if (final_compress)
+                result.compress_svd(reltol, max_bond_dim);
+
+            Grid time_grid(grid.get_a().front(), grid.get_b().front(), grid.get_nBits().front());
+            if (!save_prefix.empty()) {
+                result.save(save_prefix);
+                time_grid.save_json(save_prefix);
+            }
+            return {std::move(result), std::move(time_grid)};
         }
 
     /// Evaluate an already constructed simplex-integral MPS at t in [a, b).
@@ -378,8 +389,8 @@ public:
     [[nodiscard]] static Scalar integrate_simplex(
         const State& simplex_values, const Grid& grid, const RealScalar& t)
     {
-        simplex_helper::validate_simplex_mps(simplex_values, grid.get_nBits(),
-                                             "QuanticsIntegrator_kD::integrate_simplex");
+        simplex_helper::validation::validate_simplex_mps(
+            simplex_values, grid.get_nBits(), "QuanticsIntegrator_kD::integrate_simplex");
         return simplex_values.eval(simplex_sample_id(grid, t));
     }
 
@@ -388,8 +399,8 @@ public:
         const State& simplex_values, const Grid& grid,
         const std::vector<RealScalar>& times)
     {
-        simplex_helper::validate_simplex_mps(simplex_values, grid.get_nBits(),
-                                             "QuanticsIntegrator_kD::integrate_simplex");
+        simplex_helper::validation::validate_simplex_mps(
+            simplex_values, grid.get_nBits(), "QuanticsIntegrator_kD::integrate_simplex");
         // Validate and convert every time before eval_list enters its OpenMP loop.
         std::vector<std::vector<int>> ids;
         ids.reserve(times.size());

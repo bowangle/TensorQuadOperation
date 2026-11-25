@@ -33,6 +33,19 @@ MPS<Scalar> make_ordered_mps(std::vector<Tensor3D<Scalar>> cores, int ordering)
 
 } // namespace detail
 
+/// Construct a rank-one binary MPS that evaluates to one on every bit string.
+template<typename Scalar>
+MPS<Scalar> make_one_mps(int nbit, int ordering = 1)
+{
+    if (nbit <= 0)
+        throw std::invalid_argument("make_one_mps: nbit must be positive");
+
+    Tensor3D<Scalar> core(1, 2, 1);
+    core(0, 0, 0) = core(0, 1, 0) = Scalar(1);
+    std::vector<Tensor3D<Scalar>> cores(static_cast<std::size_t>(nbit), core);
+    return detail::make_ordered_mps(std::move(cores), ordering);
+}
+
 /// Construct the rank-one basis MPS that is one at the supplied bit string
 /// and zero at every other bit string. bits[k] selects the physical index
 /// of core k; bits[0] is the least-significant bit in the QTGrid convention.

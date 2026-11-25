@@ -16,6 +16,7 @@ namespace TensorQuadOperation {
 // Helper declarations for the convolution implementation below.
 template<typename T> class MPS;
 template<typename T> class MPO;
+template<typename T> class TTN;
 template<typename T> MPS<T> magic_tensor_product(const MPS<T>& mps);
 template<typename T> MPO<T> reshape_magic_res(const MPS<T>& result);
 
@@ -29,6 +30,8 @@ template<typename T> MPS<T> make_basis_mps(const std::vector<int>& bits, int ord
 
 template<typename T>
 class MPS : public TT<T> {
+    friend class TTN<T>;
+
     using Base       = TT<T>;
     using VecTT      = std::vector<xfac_quad::Tensor3D<T>>;
     using MatrixX    = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
@@ -69,17 +72,17 @@ public:
         using Core = xfac_quad::Tensor3D<T>;
         using Index = Eigen::Index;
         using Shape = std::array<Index, 3>;
-        const auto core_shape = [](const Core& tensor, int ordering) -> Shape {
+        const auto core_shape = [](const Core& tensor, int ordering_) -> Shape {
             const Shape stored{tensor.n_rows, tensor.n_cols, tensor.n_slices};
-            return {stored[ordering == 0 ? 1 : 0], stored[ordering], stored[ordering == 2 ? 1 : 2]};
+            return {stored[ordering_ == 0 ? 1 : 0], stored[ordering_], stored[ordering_ == 2 ? 1 : 2]};
         };
 
         // Take matrix views in each core's stored layout.
         using Stride = typename Core::Stride_dim;
         using Slice = Eigen::Map<const MatrixX, 0, Stride>;
-        const auto physical_slice = [](const Core& tensor, int ordering, Index p) -> Slice {
-            if (ordering == 0) return tensor.row_as_mat_const(p);
-            if (ordering == 1) return tensor.col_as_mat_const(p);
+        const auto physical_slice = [](const Core& tensor, int ordering_, Index p) -> Slice {
+            if (ordering_ == 0) return tensor.row_as_mat_const(p);
+            if (ordering_ == 1) return tensor.col_as_mat_const(p);
             const auto view = tensor.slice_const(p);
             return Slice(view.data(), view.rows(), view.cols(), Stride(view.outerStride(), view.innerStride()));
         };

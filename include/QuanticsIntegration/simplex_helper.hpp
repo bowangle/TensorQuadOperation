@@ -1,20 +1,24 @@
 #pragma once
 
 #include "TensorQuadOperation/ttn_base.hpp"
+#include "TensorQuadOperation/generic_construction.hpp"
+#include "TensorQuadOperation/magic_tensor.hpp"
 #include "TensorQuadOperation/utc.hpp"
 #include <QTgrid-quad/grid.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace QuanticsIntegration::simplex_helper {
 
-namespace detail {
+namespace validation {
 
 template<typename Scalar>
 void validate_train(const TensorQuadOperation::TT<Scalar>& values, int bits,
@@ -59,13 +63,11 @@ void validate_branch_mpo(const TensorQuadOperation::MPO<Scalar>& branch, int bit
     validate_train<Scalar>(branch, bits, 4, operation, /*allow_open_right=*/true);
 }
 
-} // namespace detail
-
 template<typename Scalar>
 void validate_simplex_mps(const TensorQuadOperation::MPS<Scalar>& values,
                           int bits, const char* operation, bool allow_open_right = false)
 {
-    detail::validate_train<Scalar>(values, bits, 2, operation, allow_open_right);
+    validate_train<Scalar>(values, bits, 2, operation, allow_open_right);
 }
 
 template<typename Scalar>
@@ -161,82 +163,285 @@ void validation_simplex_parameter(
         validate_simplex_mps(kernel, bits, "QuanticsIntegrator_kD::make_integration_simplex kernel");
 }
 
-//vk-1 branch (MPS_k-1)(vk-1=2 leg dim) * substractor MPO ((vk-1, (uk-1,uk-2))=2*(2*2) leg dim)
-//      -> MPS_k-1((uk-1,uk-2)=(2*2) leg dim)
-//      convert to MPO_k-1 (uk-1*uk-2=2*2 leg dim)
-/// The resulting MPO has fused slot 2 * upper_time_bit + integrated_time_bit.
-/// The branch and subtractor use LSB-first sites. The branch's open right
-/// attachment stays in its original basis for the contraction with the junction.
+} // namespace validation
+
+/// Return a two-time MPO with output u_{k-1}, input u_k, and an open attachment bond.
+/// Move the tree's canonical center to the branch endpoint so the MPO's open
+/// bond matches the tree's post-extraction attachment gauge.
 template<typename Scalar>
 TensorQuadOperation::MPO<Scalar> substract_branch(
-    TensorQuadOperation::MPS<Scalar> branch,
-    TensorQuadOperation::TT<Scalar> subtractor)
+    TensorQuadOperation::TTN<Scalar>& tree, int branch_id,
+    const std::string& method = "zip-up")
 {
-    // MPS has leg                vk-1  = 2
-    // MPO has leg (vk-1, (uk-1,uk-2))  = 2*(2*2)
-
-    // MPS has a dangling leg (be carefull, get it from extract_branch)
-    const int bits = static_cast<int>(std::as_const(subtractor).get_core().size());
-    validate_simplex_mps(branch, bits, "substract_branch", /*allow_open_right=*/true);
-    detail::validate_train(subtractor, bits, 8, "substract_branch subtractor", /*allow_open_right=*/false);
-    const int ordering = branch.get_ordering();
+    auto branch = tree._extract_branch(branch_id, /*compress=*/false);
+    // Branch branch_id encodes v_k with k = branch_id + 1, LSB first.
+    // Its left boundary is one; its right bond connects to the attachment.
+    // The subtractor enforces u_{k-1} = u_k + v_k without wraparound (u_0 = t).
+    // Input: v_k. Fused output slot: u_k_bit + 2 * u_{k-1}_bit.
+    // leg dim is ([(u_k=2) * (u_{k-1}=2)] * [v_k=2])= (4*2)
     TensorQuadOperation::MPO<Scalar> subtractor_mpo(
-        TensorQuadOperation::TT<Scalar>::change_ordering(std::move(subtractor), ordering),
+        TensorQuadOperation::make_magic_tensor<Scalar>(branch.get_size(), branch.get_ordering()),
         /*left_phys=*/4, /*right_phys=*/2);
 
-    // Move the centres along internal bonds only, then contract without truncation.
-    branch.shift_w(bits - 1);
-    subtractor_mpo.shift_w(bits - 1);
-    auto cores = TensorQuadOperation::utc::qrsvd::qrsvd_contract_mpo_mps(subtractor_mpo, branch);
-    return TensorQuadOperation::MPO<Scalar>(std::move(cores), branch.get_max_bond_dim(),
-                                           branch.get_reltol(), /*w=*/-1,
-                                           /*left_phys=*/2, /*right_phys=*/2, ordering);
+    return TensorQuadOperation::MPO<Scalar>(subtractor_mpo._mul(branch, method),
+                                           /*left_phys=*/2, /*right_phys=*/2);
 }
 
-//  if kernel:
-//      MPO_N(uN*uN-1=2*2 leg dim) * MPS_kernel(uN=2 leg dim)
-//  if no kernel:
-//      MPO_N(uN*uN-1=2*2 leg dim) * MPS=1 everywhere (uN=2 leg dim)
-/// Sum over u_N with the given kernel. The caller applies the grid spacing.
-template<typename Scalar>
-TensorQuadOperation::MPS<Scalar> init_integrate_branch(
-    TensorQuadOperation::MPO<Scalar> branch,
-    TensorQuadOperation::MPS<Scalar> kernel
-)
+/// Apply only to the last gap branch v_N, where N is the total number of branches.
+/// Sum over u_N, changing the tree in place from (v_1, ..., v_{N-1}, v_N)
+/// to (v_1, ..., v_{N-1}, u_{N-1}). Before insertion, multiply the resulting
+/// MPS by the 1D grid spacing h for the last branch.
+/// A null kernel uses an all-ones MPS for the unweighted sum.
+template<typename Scalar, typename Real, typename Sint>
+void _init_integrate_branch(
+    TensorQuadOperation::TTN<Scalar>& tree,
+    const qtgrid::MultQTGrid<Real, Sint>& grid,
+    std::type_identity_t<const TensorQuadOperation::MPS<Scalar>*> kernel = nullptr,
+    const std::string& method = "zip-up")
 {
-    // MPO_N(uN*uN-1 = 2*2 leg dim) has dangling leg
-    // MPS (uN = 2 leg dim)
+    const auto& branches = tree.get_TTN_body().tree.branches;
+    if (!branches || branches->empty())
+        throw std::invalid_argument("_init_integrate_branch2: expected at least one branch");
+    if (branches->size() != static_cast<std::size_t>(grid.get_dim()))
+        throw std::invalid_argument("_init_integrate_branch2: expected one grid dimension per branch");
+    const int last_branch = static_cast<int>(branches->size() - 1);
+    const Real h = grid.get_dx().at(last_branch);
+    if (!(h > Real(0)))
+        throw std::invalid_argument("_init_integrate_branch2: grid spacing must be positive");
+    auto branch_mpo = substract_branch(tree, last_branch, method);
+    const int bits = branch_mpo.get_size();
 
-    // if no kernel provided use kernel = MPS( the constant =1 function)
-
-    const int bits = static_cast<int>(std::as_const(branch).get_core().size());
-    validate_simplex_mps(kernel, bits, "init_integrate_branch kernel");
-    detail::validate_branch_mpo(branch, bits, "init_integrate_branch");
-    const int ordering = branch.get_ordering();
-    if (kernel.get_ordering() != ordering)
-        kernel = TensorQuadOperation::MPS<Scalar>(
-            TensorQuadOperation::TT<Scalar>::change_ordering(std::move(kernel), ordering));
-
-    branch.shift_w(bits - 1);
-    kernel.shift_w(bits - 1);
-    auto cores = TensorQuadOperation::utc::qrsvd::qrsvd_contract_mpo_mps(branch, kernel);
-
-    // return an mps uN-1 with dangling leg (same as the one of the original mpo_N)
-    return TensorQuadOperation::MPS<Scalar>(std::move(cores), branch.get_max_bond_dim(),
-                                           branch.get_reltol(), /*w=*/-1, ordering);
+    if (kernel) {
+        // Contract the binary u_N input with the kernel, leaving u_{N-1} open.
+        validation::validate_simplex_mps(*kernel, bits, "_init_integrate_branch2 kernel");
+        const int ordering = branch_mpo.get_ordering();
+        auto message = kernel->get_ordering() == ordering
+            ? branch_mpo._mul(*kernel, method)
+            : branch_mpo._mul(TensorQuadOperation::MPS<Scalar>(
+                  TensorQuadOperation::TT<Scalar>::change_ordering(*kernel, ordering)), method);
+        message *= Scalar(h);
+        tree._insert_branch(last_branch, std::move(message), /*original_w=*/-1, /*compress=*/false);
+    } else {
+        auto ones = TensorQuadOperation::analytic_mps_construction::make_one_mps<Scalar>(
+            bits, /*ordering=*/2);
+        auto message = branch_mpo._mul(ones, method);
+        message *= Scalar(h);
+        tree._insert_branch(last_branch, std::move(message), /*original_w=*/-1, /*compress=*/false);
+    }
 }
 
-template<typename Scalar>
-TensorQuadOperation::MPS<Scalar> init_integrate_branch(TensorQuadOperation::MPO<Scalar> branch)
+// from (v_1, ..., v_{k-1}, v_k, u_k) to (v_1, ..., v_{k-1}, u_{k-1})
+// work on both branch v_k and u_k which are the branch k-1 and k of the tree.
+// Update the tree in place; the final step leaves a single branch on t.
+template<typename Scalar, typename Real, typename Sint>
+void _integrate_k_branch(
+    TensorQuadOperation::TTN<Scalar>& tree,
+    const qtgrid::MultQTGrid<Real, Sint>& grid,
+    int branch_k,
+    std::type_identity_t<const TensorQuadOperation::MPS<Scalar>*> kernel = nullptr,
+    const std::string& method = "zip-up")
 {
-    const int ordering = branch.get_ordering();
-    std::array<Eigen::Index, 3> shape{1, 1, 1};
-    shape[ordering] = 2;
-    xfac_quad::Tensor3D<Scalar> ones_core(shape[0], shape[1], shape[2]);
-    ones_core.data[0] = ones_core.data[1] = Scalar(1);
-    std::vector<xfac_quad::Tensor3D<Scalar>> cores(std::as_const(branch).get_core().size(), ones_core);
-    return init_integrate_branch(std::move(branch), TensorQuadOperation::MPS<Scalar>(
-        std::move(cores), /*max_bond_dim=*/0, /*reltol=*/-1, /*w=*/-1, ordering));
+    const auto& branches = tree.get_TTN_body().tree.branches;
+    if (!branches || branches->size() < 2 || branch_k < 1 || branch_k >= grid.get_dim() ||
+        static_cast<std::size_t>(branch_k) != branches->size() - 1)
+        throw std::invalid_argument("_integrate_k_branch: expected the last two active branches");
+    const Real h = grid.get_dx().at(branch_k - 1);
+    if (!(h > Real(0)))
+        throw std::invalid_argument("_integrate_k_branch: grid spacing must be positive");
+
+    // ============================================================
+    //              Substract
+    // ============================================================
+    auto branch_mpo = substract_branch(tree, branch_k - 1, method); // v_k -> uk-1, uk
+
+    // ============================================================
+    //              kernel if provided
+    // ============================================================
+
+    // TODO if kernel is provide for now we skip it. (it will only modify branch_mpo but not it's leg dimension)
+
+    // ============================================================
+    //              merge on uk
+    // ============================================================
+
+    auto message = tree._copy_branch(branch_k); // uk
+
+    using RealScalar = typename TensorQuadOperation::TTN<Scalar>::RealScalar;
+    const RealScalar mpo_tol = branch_mpo.get_reltol();
+    const RealScalar message_tol = message.get_reltol();
+    const RealScalar merged_tol = mpo_tol < RealScalar(0) ? message_tol
+        : message_tol < RealScalar(0) ? mpo_tol : std::min(mpo_tol, message_tol);
+    const int mpo_cap = branch_mpo.get_max_bond_dim();
+    const int message_cap = message.get_max_bond_dim();
+    const int merged_cap = mpo_cap <= 0 ? std::max(0, message_cap)
+        : message_cap <= 0 ? mpo_cap : std::min(mpo_cap, message_cap);
+
+    // Disable truncation on both operands while their attachment bonds are open.
+    branch_mpo = TensorQuadOperation::MPO<Scalar>(
+        std::as_const(branch_mpo).get_core(), /*max_bond_dim=*/0, /*reltol=*/RealScalar(-1),
+        /*w=*/branch_mpo.get_w(), branch_mpo.get_left_phys(), branch_mpo.get_right_phys(), branch_mpo.get_ordering());
+    message = TensorQuadOperation::MPS<Scalar>(
+        std::as_const(message).get_core(), /*max_bond_dim=*/0, /*reltol=*/RealScalar(-1),
+        /*w=*/message.get_w(), message.get_ordering());
+    // The method selects the subtractor only. Use untruncated zip-up for the merge.
+    auto merged = branch_mpo._mul(message, "zip-up"); // Sum over u_k, leaving u_{k-1} open.
+
+    // Close the fused right bond before compression.
+    const auto& body = tree.get_TTN_body();
+    const auto& topology = body.tree;
+    const auto& gap_branch = branches->at(branch_k - 1);
+    const auto& message_branch = branches->at(branch_k);
+    const int gap_endpoint = gap_branch.nodes.back();
+    const int message_endpoint = message_branch.nodes.back();
+    const int junction_id = gap_branch.attachment;
+    const Eigen::Index gap_dim = std::as_const(branch_mpo).get_core().back().n_cols;
+    const Eigen::Index message_dim = std::as_const(message).get_core().back().n_cols;
+    auto cores = merged.get_core();
+    const auto& last = cores.back(); // Ordering 2: (left, right, physical).
+    if (last.n_cols != gap_dim * message_dim)
+        throw std::invalid_argument("_integrate_k_branch: invalid fused bond dimension");
+
+    int outgoing = -1;
+    xfac_quad::Tensor3D<Scalar> absorbed;
+    if (junction_id == message_endpoint && message_branch.attachment == gap_endpoint) {
+        // The branches share a bond directly. Trace the two copies of it.
+        if (gap_dim != message_dim)
+            throw std::invalid_argument("_integrate_k_branch: direct bond dimensions differ");
+        absorbed = xfac_quad::Tensor3D<Scalar>(last.n_rows, 1, last.n_slices);
+        for (Eigen::Index p = 0; p < last.n_slices; ++p)
+            for (Eigen::Index a = 0; a < gap_dim; ++a)
+                absorbed.slice(p).col(0) += last.slice_const(p).col(a + message_dim * a);
+    } else {
+        if (junction_id < 0 || junction_id != message_branch.attachment ||
+            !topology.neigh.contains(junction_id) || topology.nodes.contains(junction_id))
+            throw std::invalid_argument("_integrate_k_branch: expected a shared junction node");
+
+        const auto& junction = body.M.at(junction_id);
+        const auto& neighbors = topology.neigh.at(junction_id);
+        const int gap_axis = neighbors.pos(gap_endpoint);
+        const int message_axis = neighbors.pos(message_endpoint);
+        if (gap_axis < 0 || gap_axis > 2 || message_axis < 0 || message_axis > 2 ||
+            gap_axis == message_axis || neighbors.size() > 3)
+            throw std::invalid_argument("_integrate_k_branch: invalid junction axes");
+        const int outgoing_axis = 3 - gap_axis - message_axis;
+        if (static_cast<std::size_t>(outgoing_axis) < neighbors.size())
+            outgoing = neighbors.at(outgoing_axis);
+        const std::array<Eigen::Index, 3> shape{junction.n_rows, junction.n_cols, junction.n_slices};
+        const Eigen::Index outgoing_dim = shape[outgoing_axis];
+        if (shape[gap_axis] != gap_dim || shape[message_axis] != message_dim ||
+            outgoing_dim <= 0 || (outgoing == -1 && outgoing_dim != 1))
+            throw std::invalid_argument("_integrate_k_branch: invalid junction bond dimensions");
+
+        using Matrix = typename xfac_quad::Tensor3D<Scalar>::MatrixX;
+        Matrix packed = xfac_quad::cubeToMat_R(junction, outgoing_axis);
+        // The unfolding packs the lower axis first; the merged bond needs message fastest.
+        if (gap_axis < message_axis) {
+            Matrix reordered(packed.rows(), packed.cols());
+            for (Eigen::Index s = 0; s < outgoing_dim; ++s) {
+                Eigen::Map<const Matrix> src(packed.col(s).data(), gap_dim, message_dim);
+                Eigen::Map<Matrix> dst(reordered.col(s).data(), message_dim, gap_dim);
+                dst = src.transpose();
+            }
+            packed.swap(reordered);
+        }
+        absorbed = xfac_quad::Tensor3D<Scalar>(last.n_rows, outgoing_dim, last.n_slices);
+        for (Eigen::Index p = 0; p < last.n_slices; ++p)
+            absorbed.slice(p).noalias() = last.slice_const(p) * packed;
+    }
+    if ((outgoing == -1) != (branches->size() == 2))
+        throw std::invalid_argument("_integrate_k_branch: unexpected outgoing bond for this step");
+
+    // Apply this step's quadrature weight and compress only after closing the fused bond.
+    for (auto& value : absorbed.data)
+        value *= Scalar(h);
+    cores.back() = std::move(absorbed);
+    merged = TensorQuadOperation::MPS<Scalar>(
+        std::move(cores), merged_cap, merged_tol, /*w=*/-1, merged.get_ordering());
+    if (merged_cap > 0 || merged_tol >= RealScalar(0))
+        merged.compress_svd(merged_tol, merged_cap);
+    if (outgoing == -1) {
+        // Store the closed t-MPS as a single leaf-to-endpoint branch.
+        xfac_quad::TensorTree<Scalar> result;
+        result.M = merged.get_core();
+        auto& branch = result.tree.branches.emplace().emplace_back();
+        result.tree.neigh[0]; // Also register the isolated one-bit case.
+        for (int site = 0; site < merged.get_size(); ++site) {
+            result.tree.nodes.insert(site);
+            branch.nodes.push_back(site);
+            if (site > 0) result.tree.addEdge(site - 1, site);
+        }
+        // The leaf's first neighbor slot points right, so swap its bond axes.
+        if (result.M.size() > 1) {
+            const auto& leaf = result.M.front();
+            xfac_quad::Tensor3D<Scalar> swapped(leaf.n_cols, leaf.n_rows, leaf.n_slices);
+            for (Eigen::Index p = 0; p < leaf.n_slices; ++p)
+                swapped.slice(p) = leaf.slice_const(p).transpose();
+            result.M.front() = std::move(swapped);
+        }
+        tree = TensorQuadOperation::TTN<Scalar>(std::move(result),
+            tree.get_max_bond_dim(), tree.get_reltol(), /*w=*/-1);
+        return;
+    }
+
+    // Reuse the gap nodes for the new message. Remove the old message and the
+    // absorbed junction, keeping the same neighbor-axis order on surviving nodes.
+    std::set<int> removed(message_branch.nodes.begin(), message_branch.nodes.end());
+    removed.insert(junction_id);
+    std::vector<int> node_map(body.M.size(), -1);
+    xfac_quad::TensorTree<Scalar> reduced;
+    for (const auto& [node, neighbors] : topology.neigh) {
+        if (removed.contains(node)) continue;
+        node_map.at(node) = static_cast<int>(reduced.M.size());
+        reduced.M.push_back(body.M.at(node));
+    }
+    const auto remap = [&](int node) {
+        if (node == -1) return -1;
+        const int new_node = node_map.at(node);
+        if (new_node == -1)
+            throw std::invalid_argument("_integrate_k_branch: surviving node references a removed node");
+        return new_node;
+    };
+    reduced.tree.root = remap(removed.contains(topology.root) ? gap_endpoint : topology.root);
+    for (const auto& [node, neighbors] : topology.neigh) {
+        if (removed.contains(node)) continue;
+        const int new_node = remap(node);
+        if (topology.nodes.contains(node)) reduced.tree.nodes.insert(new_node);
+        auto& new_neighbors = reduced.tree.neigh[new_node];
+        for (int neighbor : neighbors.from_int()) {
+            if (neighbor == junction_id && node == gap_endpoint) neighbor = outgoing;
+            else if (neighbor == junction_id && node == outgoing) neighbor = gap_endpoint;
+            new_neighbors.push_back(remap(neighbor));
+        }
+    }
+    reduced.tree.branches.emplace();
+    for (int i = 0; i < branch_k; ++i) {
+        auto branch = branches->at(i);
+        if (i == branch_k - 1) branch.attachment = outgoing;
+        else if (branch.attachment == junction_id) branch.attachment = gap_endpoint;
+        branch.attachment = remap(branch.attachment);
+        for (int& node : branch.nodes) node = remap(node);
+        reduced.tree.branches->push_back(std::move(branch));
+    }
+
+    const auto& merged_cores = std::as_const(merged).get_core();
+    const auto& new_branch = reduced.tree.branches->back();
+    for (std::size_t i = 0; i < new_branch.nodes.size(); ++i) {
+        const int node = new_branch.nodes[i];
+        const auto& neighbors = reduced.tree.neigh.at(node);
+        const int left_axis = i > 0 ? neighbors.pos(new_branch.nodes[i - 1])
+            : 1 - neighbors.pos(new_branch.nodes.size() == 1 ? new_branch.attachment : new_branch.nodes[1]);
+        const auto& core = merged_cores[i];
+        if (left_axis == 0) {
+            reduced.M.at(node) = core;
+        } else {
+            xfac_quad::Tensor3D<Scalar> swapped(core.n_cols, core.n_rows, core.n_slices);
+            for (Eigen::Index p = 0; p < core.n_slices; ++p)
+                swapped.slice(p) = core.slice_const(p).transpose();
+            reduced.M.at(node) = std::move(swapped);
+        }
+    }
+    tree = TensorQuadOperation::TTN<Scalar>(std::move(reduced),
+        tree.get_max_bond_dim(), tree.get_reltol(), /*w=*/-1);
 }
 
 /// Compose the branch MPO with the diagonal kernel on the input time u_{k-1}.
@@ -249,8 +454,8 @@ TensorQuadOperation::MPO<Scalar> add_kernel_k_step(
     const auto& branch_cores = branch.get_core();
     const auto& kernel_cores = kernel.get_core();
     const int bits = static_cast<int>(branch_cores.size());
-    validate_simplex_mps(kernel, bits, "add_kernel_k_step kernel");
-    detail::validate_branch_mpo(branch, bits, "add_kernel_k_step");
+    validation::validate_simplex_mps(kernel, bits, "add_kernel_k_step kernel");
+    validation::validate_branch_mpo(branch, bits, "add_kernel_k_step");
     const int ordering = branch.get_ordering();
     const int kernel_ordering = kernel.get_ordering();
     using TensorQuadOperation::utc::zip_up::detail::zip_up_core_dimensions;
