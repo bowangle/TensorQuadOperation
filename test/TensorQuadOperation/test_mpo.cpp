@@ -14,6 +14,9 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <filesystem>
+
+static const std::string output_dir = "test/output/mpo/";
 
 using TensorQuadOperation::MPO;
 using TensorQuadOperation::MPS;
@@ -107,7 +110,7 @@ void do_save_TCI(
     auto logger = spdlog::get(logger_name);
     if (!logger)
     {
-        logger = spdlog::basic_logger_mt(logger_name, "test/output/" + log_filename);
+        logger = spdlog::basic_logger_mt(logger_name, output_dir + log_filename);
     }
 
     xfac_quad_runner::TCI2_1D_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
@@ -401,8 +404,9 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
 
 int main()
 {
-    std::string file_mps_f1 = "test/output/test_mpo_out_f1";
-    std::string file_mps_f2 = "test/output/test_mpo_out_f2";
+    std::filesystem::create_directories(output_dir);
+    std::string file_mps_f1 = output_dir + "test_mpo_out_f1";
+    std::string file_mps_f2 = output_dir + "test_mpo_out_f2";
 
     const int n_points = 1000;
 

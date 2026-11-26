@@ -320,7 +320,9 @@ public:
     /// If path_logger is nonempty, log the tree and bond dimensions before and
     /// after each step to path_logger + "logger_integration_simplex.log".
     /// Each entry is timestamped and flushed. Use distinct prefixes for concurrent calls.
-    /// method selects the initialization and subtractor contractions; merges still use untruncated zip-up.
+    /// method selects the initialization, subtractor, and merge contractions.
+    /// By default, the merge backend can truncate before the junction is absorbed.
+    /// Set merge_trucation to false to defer truncation until after junction absorption.
     static std::pair<State, Grid> make_integration_simplex(
         const mState& values,
         const mGrid& grid,
@@ -331,7 +333,8 @@ public:
         RealScalar reltol = RealScalar(-1),
         bool final_compress = true,
         const std::string& path_logger = {},
-        const std::string& method = "zip-up"){
+        const std::string& method = "zip-up",
+        bool merge_trucation = true){
 
             // parameter validation
             simplex_helper::validation::validation_simplex_parameter(values, grid, kernels, kernel_grid);
@@ -378,7 +381,7 @@ public:
             {
                 log_tree("before", "_integrate_k_branch", branch_k);
                 simplex_helper::_integrate_k_branch(
-                    working_tree, grid, branch_k, /*kernel=*/nullptr, method, simplex_logger.get());
+                    working_tree, grid, branch_k, /*kernel=*/nullptr, method, simplex_logger.get(), merge_trucation);
                 log_tree("after", "_integrate_k_branch", branch_k);
             }
                 

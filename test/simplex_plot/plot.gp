@@ -7,17 +7,29 @@ set grid back
 set key opaque
 
 out = 'test/output/simplex_plot/'
+methods = 'zip-up zip-up qrsvd qrsvd optimize'
+truncation = 'off on off on on'
 do for [precision in 'double dd_128 float128'] {
     bits = (precision eq 'double') ? 50 : 100
     dataset_count = (precision eq 'double') ? 5 : 3
-    do for [dataset=1:dataset_count] {
+    regular_count = dataset_count * words(methods)
+    extra_count = (precision eq 'dd_128') ? 2 : 0
+    do for [i=0:regular_count+extra_count-1] {
+        # The two extra dd_128 rank-30 datasets use truncated zip-up (config 2).
+        config = i < regular_count ? i / dataset_count + 1 : 2
+        method = word(methods, config)
+        merge_trunc = word(truncation, config)
+        dataset = i < regular_count ? i % dataset_count + 1 : 4 + i - regular_count
         dim = dataset > 3 ? 3 : dataset
         suffix = dataset == 5 ? '_rank30_tci' : (dataset == 4 ? '_rank30' : '')
         title_suffix = dataset == 5 ? ', degree 29 (TCI fit)' : (dataset == 4 ? ', degree 29 (explicit TTN)' : '')
-        stem = out . sprintf('%s_%dD%s', precision, dim, suffix)
+        method_suffix = method eq 'zip-up' ? '' : '_' . method
+        trunc_suffix = merge_trunc eq 'on' ? '_trunc' : ''
+        folder = dataset == 5 ? '3Drank30_tci' : (dataset == 4 ? '3Drank30' : sprintf('%dD', dim))
+        stem = out . folder . '/' . sprintf('%s_%dD%s%s%s', precision, dim, suffix, method_suffix, trunc_suffix)
         datafile = stem . '.csv'
         set output stem . '.svg'
-        set multiplot layout 3,1 title sprintf('Simplex integration: %s, %dD, %d bits, 1000 samples%s', precision, dim, bits, title_suffix)
+        set multiplot layout 3,1 title sprintf('Simplex integration: %s, %s (merge truncation %s), %dD, %d bits, 1000 samples%s', precision, method, merge_trunc, dim, bits, title_suffix)
 
         unset logscale
         set xrange [0:1]

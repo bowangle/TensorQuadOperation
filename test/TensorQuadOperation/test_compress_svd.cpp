@@ -8,7 +8,11 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
 #include <iomanip>
+#include <string>
+
+static const std::string output_dir = "test/output/compress_svd/";
 
 using TensorQuadOperation::TT;
 
@@ -106,7 +110,7 @@ void do_save_TCI(
     auto logger = spdlog::get(logger_name);
     if (!logger)
     {
-        logger = spdlog::basic_logger_mt(logger_name, "test/output/" + log_filename);
+        logger = spdlog::basic_logger_mt(logger_name, output_dir + log_filename);
     }
 
     xfac_quad_runner::TCI2_1D_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
@@ -278,8 +282,9 @@ void test_function(const std::string& name, const std::string& filename_1, const
 
 int main()
 {
-    std::string file_tt_f1 = "test/output/test2_out_f1";
-    std::string file_tt_f2 = "test/output/test2_out_f2";
+    std::filesystem::create_directories(output_dir);
+    std::string file_tt_f1 = output_dir + "test2_out_f1";
+    std::string file_tt_f2 = output_dir + "test2_out_f2";
     // TCI the two function in float128
     {
         using scalar_type = Cfloat128;

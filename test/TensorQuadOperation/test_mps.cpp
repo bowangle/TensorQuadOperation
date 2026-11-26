@@ -13,6 +13,9 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <filesystem>
+
+static const std::string output_dir = "test/output/mps/";
 
 using TensorQuadOperation::MPS;
 using TensorQuadOperation::TT;
@@ -68,7 +71,7 @@ void do_save_TCI(
     auto logger = spdlog::get(logger_name);
     if (!logger)
     {
-        logger = spdlog::basic_logger_mt(logger_name, "test/output/" + log_filename);
+        logger = spdlog::basic_logger_mt(logger_name, output_dir + log_filename);
     }
 
     xfac_quad_runner::TCI2_1D_Runner<Scalar, long long> tci_runner(grid, tci_param, function_to_tci, logger);
@@ -831,6 +834,7 @@ void test_mps(const std::string& name, const std::string& filename_1, const std:
 
 int main()
 {
+    std::filesystem::create_directories(output_dir);
     // TCI the two function in float128
     {
         using scalar_type = Cfloat128;
@@ -844,8 +848,8 @@ int main()
         int n_iter = 15;
         int nb_point_out = 1000;
 
-        std::string file_prefix_1 = "test/output/test_out_f1";
-        std::string file_prefix_2 = "test/output/test_out_f2";
+        std::string file_prefix_1 = output_dir + "test_out_f1";
+        std::string file_prefix_2 = output_dir + "test_out_f2";
 
         do_save_TCI<scalar_type>(
             a_1,
@@ -872,8 +876,8 @@ int main()
 
     const int n_points = 1000;
     // now we have the following file:
-    std::string file_tt_f1 = "test/output/test_out_f1";
-    std::string file_tt_f2 = "test/output/test_out_f2";
+    std::string file_tt_f1 = output_dir + "test_out_f1";
+    std::string file_tt_f2 = output_dir + "test_out_f2";
 
     test_mps<std::complex<double>, long long>("complex<double> long long", file_tt_f1, file_tt_f2, n_points);
     test_mps<std::complex<double>, util::i128>("complex<double> i128", file_tt_f1, file_tt_f2, n_points);

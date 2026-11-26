@@ -241,7 +241,8 @@ void _integrate_k_branch(
     int branch_k,
     std::type_identity_t<const TensorQuadOperation::MPS<Scalar>*> kernel = nullptr,
     const std::string& method = "zip-up",
-    spdlog::logger* logger = nullptr)
+    spdlog::logger* logger = nullptr,
+    bool merge_trucation = true)
 {
     const bool log_step = logger && logger->should_log(spdlog::level::info);
     if (log_step)
@@ -291,18 +292,19 @@ void _integrate_k_branch(
     const int merged_cap = mpo_cap <= 0 ? std::max(0, message_cap)
         : message_cap <= 0 ? mpo_cap : std::min(mpo_cap, message_cap);
 
-    // Disable truncation on both operands while their attachment bonds are open.
-    branch_mpo = TensorQuadOperation::MPO<Scalar>(
-        std::as_const(branch_mpo).get_core(), /*max_bond_dim=*/0, /*reltol=*/RealScalar(-1),
-        /*w=*/branch_mpo.get_w(), branch_mpo.get_left_phys(), branch_mpo.get_right_phys(), branch_mpo.get_ordering());
-    message = TensorQuadOperation::MPS<Scalar>(
-        std::as_const(message).get_core(), /*max_bond_dim=*/0, /*reltol=*/RealScalar(-1),
-        /*w=*/message.get_w(), message.get_ordering());
-    // The method selects the subtractor only. Use untruncated zip-up for the merge.
-    auto merged = branch_mpo._mul(message, "zip-up"); // Sum over u_k, leaving u_{k-1} open.
+    // If requested, disable truncation while the attachment bonds are open.
+    if (!merge_trucation) {
+        branch_mpo = TensorQuadOperation::MPO<Scalar>(
+            std::as_const(branch_mpo).get_core(), /*max_bond_dim=*/0, /*reltol=*/RealScalar(-1),
+            /*w=*/branch_mpo.get_w(), branch_mpo.get_left_phys(), branch_mpo.get_right_phys(), branch_mpo.get_ordering());
+        message = TensorQuadOperation::MPS<Scalar>(
+            std::as_const(message).get_core(), /*max_bond_dim=*/0, /*reltol=*/RealScalar(-1),
+            /*w=*/message.get_w(), message.get_ordering());
+    }
+    auto merged = branch_mpo._mul(message, method); // Sum over u_k, leaving u_{k-1} open.
 
     if (log_step)
-        logger->info("Merged MPS before compression: max_chi = {}", merged.get_chi());
+        logger->info("Merged MPS before post-merge compression: max_chi = {}", merged.get_chi());
 
     // Close the fused right bond before compression.
     const auto& body = tree.get_TTN_body();
@@ -369,7 +371,7 @@ void _integrate_k_branch(
     if ((outgoing == -1) != (branches->size() == 2))
         throw std::invalid_argument("_integrate_k_branch: unexpected outgoing bond for this step");
 
-    // Apply this step's quadrature weight and compress only after closing the fused bond.
+    // Apply this step's quadrature weight and compress again after closing the fused bond.
     for (auto& value : absorbed.data)
         value *= Scalar(h);
     cores.back() = std::move(absorbed);

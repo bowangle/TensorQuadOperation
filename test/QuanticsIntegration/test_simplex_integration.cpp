@@ -31,8 +31,17 @@ namespace {
 constexpr int bits = 4;
 constexpr int samples = 1 << bits;
 constexpr double h = 1.0 / samples;
-constexpr int plot_dataset_count = 3 * 3 + 2; // Three low-degree cases per precision and two double-only degree-29 cases.
-int plot_datasets_written = 0;
+struct MergeCase {
+    const char* method;
+    bool merge_trucation;
+};
+constexpr std::array<MergeCase, 5> merge_cases{{
+    {"zip-up", false}, {"zip-up", true},
+    {"qrsvd", false}, {"qrsvd", true},
+    {"optimize", true},
+}};
+constexpr auto plot_dataset_count = (3 * 3 + 2) * merge_cases.size() + 2; // Two extra dd_128 rank-30 datasets.
+std::size_t plot_datasets_written = 0;
 
 double polynomial(int dimension, double x, double y = 0, double z = 0)
 {
@@ -159,7 +168,8 @@ Real continuous_reference(int dimension, const Real& t)
 constexpr int rank30_degree = 29;
 constexpr int rank30 = rank30_degree + 1;
 constexpr int rank30_max_bond_dim = 100;
-constexpr double rank30_reltol = 1e4 * std::numeric_limits<double>::epsilon();
+template<typename Real>
+const Real rank30_reltol = Real(10000) * Eigen::NumTraits<Real>::epsilon();
 // The polynomial has supremum 1e4 on the fitting cube [0,1)^3.
 const double rank30_scale = std::expm1(std::log(1e4) / rank30_degree) / 3.0;
 
@@ -338,7 +348,8 @@ TEMPLATE_TEST_CASE("Simplex integration matches the inclusive grid sum in 1D, 2D
 
     // 1D skips the merge, 2D closes a direct branch bond, and 3D absorbs a junction.
     const int dimension = GENERATE(1, 2, 3);
-    CAPTURE(dimension);
+    const auto [method, merge_trucation] = GENERATE(Catch::Generators::from_range(merge_cases));
+    CAPTURE(dimension, method, merge_trucation);
     const typename TestIntegrator::mGrid grid(std::vector<Real>(dimension, Real(0)),
                                                std::vector<Real>(dimension, Real(1)),
                                                std::vector<int>(dimension, bits));
@@ -349,7 +360,8 @@ TEMPLATE_TEST_CASE("Simplex integration matches the inclusive grid sum in 1D, 2D
 
     const auto [integral, time_grid] = TestIntegrator::make_integration_simplex(
         values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
-        /*max_bond_dim=*/0, /*reltol=*/Real(-1), /*final_compress=*/false);
+        /*max_bond_dim=*/merge_trucation ? 16 : 0, /*reltol=*/Real(-1),
+        /*final_compress=*/false, /*path_logger=*/{}, method, merge_trucation);
     REQUIRE(time_grid.get_a() == Real(0));
     REQUIRE(time_grid.get_b() == Real(1));
     REQUIRE(time_grid.get_nBits() == bits);
@@ -395,7 +407,8 @@ TEMPLATE_TEST_CASE("30-bit simplex integration matches sampled inclusive grid su
     constexpr std::int64_t count = std::int64_t(1) << bit_count;
     const Real spacing = Real(1) / Real(count);
     const int dimension = GENERATE(1, 2, 3);
-    CAPTURE(dimension);
+    const auto [method, merge_trucation] = GENERATE(Catch::Generators::from_range(merge_cases));
+    CAPTURE(dimension, method, merge_trucation);
 
     // Cross-check the formula against the independent exhaustive four-bit sum.
     for (int n = 0; n < samples; ++n) {
@@ -409,7 +422,8 @@ TEMPLATE_TEST_CASE("30-bit simplex integration matches sampled inclusive grid su
     const auto values = make_polynomial_ttn<Value>(dimension, bit_count);
     const auto [integral, time_grid] = Integrator::make_integration_simplex(
         values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
-        /*max_bond_dim=*/16, /*reltol=*/Real(8) * Eigen::NumTraits<Real>::epsilon());
+        /*max_bond_dim=*/16, /*reltol=*/Real(8) * Eigen::NumTraits<Real>::epsilon(),
+        /*final_compress=*/true, /*path_logger=*/{}, method, merge_trucation);
     REQUIRE(time_grid.get_nBits() == bit_count);
     REQUIRE(time_grid.get_dx() == spacing);
 
@@ -440,7 +454,7 @@ TEMPLATE_TEST_CASE("30-bit simplex integration matches sampled inclusive grid su
 namespace {
 
 template<typename Real, bool Rank30, bool FitWithTCI = false>
-void check_high_resolution_simplex(int dimension)
+void check_high_resolution_simplex(int dimension, const std::string& method, bool merge_trucation)
 {
     using Value = std::complex<Real>;
     using Integrator = QuanticsIntegration::QuanticsIntegrator_kD<Value>;
@@ -450,7 +464,7 @@ void check_high_resolution_simplex(int dimension)
     constexpr int time_count = 1000;
     constexpr Index count = Index(1) << bit_count;
     const Real spacing = Real(1) / Real(count);
-    CAPTURE(dimension, bit_count);
+    CAPTURE(dimension, bit_count, method, merge_trucation);
     const auto reference_at = [&](Index n, const Real& time) -> std::pair<Real, Real> {
         if constexpr (Rank30) {
             static const Rank30Reference reference(bit_count);
@@ -462,10 +476,14 @@ void check_high_resolution_simplex(int dimension)
 
     constexpr auto precision = std::is_same_v<Real, double> ? "double"
         : std::is_same_v<Real, dd_128> ? "dd_128" : "float128";
-    const std::filesystem::path plot_dir("test/output/simplex_plot");
+    const std::string dimension_label = std::to_string(dimension) + "D";
+    const auto plot_dir = std::filesystem::path("test/output/simplex_plot")
+        / (dimension_label + (Rank30 ? "rank30" : "") + (FitWithTCI ? "_tci" : ""));
     std::filesystem::create_directories(plot_dir);
-    const auto dataset = plot_dir / (std::string(precision) + "_" + std::to_string(dimension) + "D"
-                                     + (Rank30 ? "_rank30" : "") + (FitWithTCI ? "_tci" : ""));
+    const auto dataset = plot_dir / (std::string(precision) + "_" + dimension_label
+                                     + (Rank30 ? "_rank30" : "") + (FitWithTCI ? "_tci" : "")
+                                     + (method == "zip-up" ? "" : "_" + method)
+                                     + (merge_trucation ? "_trunc" : ""));
 
     const typename Integrator::mGrid grid(std::vector<Real>(dimension, Real(0)),
                                           std::vector<Real>(dimension, Real(1)),
@@ -480,7 +498,7 @@ void check_high_resolution_simplex(int dimension)
         if constexpr (FitWithTCI) {
             static_assert(Rank30);
             xfac_quad_runner::ttci_runner_opts<Value> options;
-            options.reltol = Real(rank30_reltol);
+            options.reltol = rank30_reltol<Real>;
             options.pivot1 = grid.coord_to_id({Real(0.5), Real(0.5), Real(0.5)});
             options.fullPiv = true;
             const xfac_quad_runner::ttci_runner_param<Value> parameters(/*nb_iter=*/8, rank30_max_bond_dim, options);
@@ -534,8 +552,8 @@ void check_high_resolution_simplex(int dimension)
     const auto [integral, time_grid] = Integrator::make_integration_simplex(
         values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
         /*max_bond_dim=*/Rank30 ? rank30_max_bond_dim : 16,
-        /*reltol=*/Rank30 ? Real(rank30_reltol) : Real(8) * Eigen::NumTraits<Real>::epsilon(),
-        /*final_compress=*/true, /*path_logger=*/dataset.string() + "_");
+        /*reltol=*/Rank30 ? rank30_reltol<Real> : Real(8) * Eigen::NumTraits<Real>::epsilon(),
+        /*final_compress=*/true, /*path_logger=*/dataset.string() + "_", method, merge_trucation);
     REQUIRE(time_grid.get_nBits() == bit_count);
     REQUIRE(time_grid.get_dx() == spacing);
 
@@ -597,7 +615,8 @@ void check_high_resolution_simplex(int dimension)
     ++plot_datasets_written;
     std::ostringstream report;
     report << std::scientific << std::setprecision(8)
-           << precision << ", " << dimension << "D, " << bit_count << " bits, " << time_count << " times"
+           << precision << ", " << method << ", merge truncation " << (merge_trucation ? "on" : "off")
+           << ", " << dimension << "D, " << bit_count << " bits, " << time_count << " times"
            << (Rank30 ? (FitWithTCI ? " (degree 29, TCI fit)" : " (degree 29)") : "") << '\n'
            << "  MPS vs discrete:   max abs=" << max_discrete
            << ", max rel (t>0)=" << max_discrete_relative << '\n'
@@ -613,19 +632,32 @@ TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and con
                    "[simplex]", double, dd_128, float128)
 {
     const int dimension = GENERATE(1, 2, 3);
-    check_high_resolution_simplex<TestType, false>(dimension);
+    const auto [method, merge_trucation] = GENERATE(Catch::Generators::from_range(merge_cases));
+    check_high_resolution_simplex<TestType, false>(dimension, method, merge_trucation);
 }
 
 TEMPLATE_TEST_CASE("High-resolution simplex integration of a rank-30 polynomial",
                    "[simplex]", double)
 {
-    check_high_resolution_simplex<TestType, true>(3);
+    const auto [method, merge_trucation] = GENERATE(Catch::Generators::from_range(merge_cases));
+    check_high_resolution_simplex<TestType, true>(3, method, merge_trucation);
 }
 
 TEST_CASE("High-resolution simplex integration of a TCI-fitted rank-30 polynomial",
           "[simplex][fit]")
 {
-    check_high_resolution_simplex<double, true, true>(3);
+    const auto [method, merge_trucation] = GENERATE(Catch::Generators::from_range(merge_cases));
+    check_high_resolution_simplex<double, true, true>(3, method, merge_trucation);
+}
+
+TEST_CASE("100-bit dd_128 simplex integration of a rank-30 polynomial",
+          "[simplex][rank30]")
+{
+    const bool fit_with_tci = GENERATE(false, true);
+    if (fit_with_tci)
+        check_high_resolution_simplex<dd_128, true, true>(3, "zip-up", /*merge_trucation=*/true);
+    else
+        check_high_resolution_simplex<dd_128, true>(3, "zip-up", /*merge_trucation=*/true);
 }
 
 int main(int argc, char* argv[])
