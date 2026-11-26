@@ -8,6 +8,7 @@
 #include <xfac_quad_runner/xf-quad-param.hpp>
 #include <Eigen/Dense>
 #include <spdlog/logger.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -316,7 +317,9 @@ public:
     /// Multi-branch weights are not supported yet; a single branch may use a kernel.
     /// The returned MPS already includes quadrature scaling. If save_prefix is
     /// nonempty, save <save_prefix>.tt and the time grid JSON files.
-    /// An optional logger prints the working tree before and after each simplex step.
+    /// If path_logger is nonempty, log the tree and bond dimensions before and
+    /// after each step to path_logger + "logger_integration_simplex.log".
+    /// Each entry is timestamped and flushed. Use distinct prefixes for concurrent calls.
     static std::pair<State, Grid> make_integration_simplex(
         const mState& values,
         const mGrid& grid,
@@ -326,21 +329,38 @@ public:
         int max_bond_dim = 0,
         RealScalar reltol = RealScalar(-1),
         bool final_compress = true,
-        std::shared_ptr<spdlog::logger> simplex_logger = nullptr){
+        const std::string& path_logger = {}){
 
             // parameter validation
             simplex_helper::validation::validation_simplex_parameter(values, grid, kernels, kernel_grid);
             if (!kernels.empty() && grid.get_dim() > 1)
                 throw std::invalid_argument("QuanticsIntegrator_kD::make_integration_simplex: multi-branch kernels are not supported yet");
 
-            // if kernels not given construct the 1 MPS.
-
             mState working_tree(values.get_TTN_body(), max_bond_dim, reltol, /*w=*/-1);
+
+            // Keep the logger private to this call, without registering it globally.
+            std::shared_ptr<spdlog::logger> simplex_logger;
+            if (!path_logger.empty()) {
+                const std::string filename = path_logger + "logger_integration_simplex.log";
+                auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(filename, /*truncate=*/true);
+                simplex_logger = std::make_shared<spdlog::logger>(filename, std::move(sink));
+                simplex_logger->set_level(spdlog::level::info);
+                simplex_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] %v");
+                simplex_logger->flush_on(spdlog::level::info);
+            }
             const auto log_tree = [&](const char* phase, const char* step, int branch_id) {
                 if (!simplex_logger || !simplex_logger->should_log(spdlog::level::info))
                     return;
                 std::ostringstream diagram;
                 working_tree.get_TTN_body().tree.print(diagram);
+                const auto chi = working_tree.compute_list_chi();
+                diagram << "max_chi: " << (chi.empty() ? 0 : *std::max_element(chi.begin(), chi.end())) << '\n';
+                diagram << "list_chi: [";
+                for (std::size_t i = 0; i < chi.size(); ++i) {
+                    if (i > 0) diagram << ", ";
+                    diagram << chi[i];
+                }
+                diagram << ']';
                 simplex_logger->info("Simplex: {} {} (branch {}):\n{}", phase, step, branch_id, diagram.str());
             };
 
@@ -350,21 +370,7 @@ public:
             simplex_helper::_init_integrate_branch(working_tree, grid, kernels.empty() ? nullptr : &kernels.back());
             log_tree("after", "_init_integrate_branch", last_branch);
 
-            // every other iteration: v1, ...,vk-2, vk-1, uk-1 (k branch)-> v1, ..., vk-2, uk-2 (k-1 branch)
-            //      vk-1 branch (MPS_k-1)(vk-1=2 leg dim) * substractor MPO ((vk-1, (uk-1,uk-2))=2*(2*2) leg dim)
-            //      -> MPS_k-1((uk-1,uk-2)=(2*2) leg dim)
-            //      convert to MPO_k-1 (uk-1*uk-2=2*2 leg dim)
-            //      if kernel:
-            //          MPO_k-1(uk-1*uk-2=2*2 leg dim) * MPO_diag_kernel(uk-1*uk-1=2*2 leg dim)
-            //      (Nothing to do in the absence of kernel)
-            //      In any case:
-            //      -> MPO_k-1 (uk-1*uk-2=2*2 leg dim)
-
-            //      and now do the big contraction: (don't forget the dangling leg on each that connect to an R tensor)
-            //      (the R tensor can be done at the very end)
-            //      MPO_k-1(uk-1*uk-2=2*2 leg dim)* MPS_k(uk-1=2 leg dim)
-            //      -> MPS_k-1 (uk-2=2)
-            // Done (we got ride of the k branch as well)
+            // other branch: from (v_1, ..., v_{k-1}, v_k, u_k) to (v_1, ..., v_{k-1}, u_{k-1})
             for (int branch_k = last_branch; branch_k > 0; --branch_k)
             {
                 log_tree("before", "_integrate_k_branch", branch_k);
@@ -372,6 +378,7 @@ public:
                 log_tree("after", "_integrate_k_branch", branch_k);
             }
                 
+            // convert 1 branch tree to MPS
             auto result = working_tree._copy_branch(0);
             if (final_compress)
                 result.compress_svd(reltol, max_bond_dim);
