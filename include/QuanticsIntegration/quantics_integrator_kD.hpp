@@ -320,6 +320,7 @@ public:
     /// If path_logger is nonempty, log the tree and bond dimensions before and
     /// after each step to path_logger + "logger_integration_simplex.log".
     /// Each entry is timestamped and flushed. Use distinct prefixes for concurrent calls.
+    /// method selects the initialization and subtractor contractions; merges still use untruncated zip-up.
     static std::pair<State, Grid> make_integration_simplex(
         const mState& values,
         const mGrid& grid,
@@ -329,7 +330,8 @@ public:
         int max_bond_dim = 0,
         RealScalar reltol = RealScalar(-1),
         bool final_compress = true,
-        const std::string& path_logger = {}){
+        const std::string& path_logger = {},
+        const std::string& method = "zip-up"){
 
             // parameter validation
             simplex_helper::validation::validation_simplex_parameter(values, grid, kernels, kernel_grid);
@@ -367,14 +369,16 @@ public:
             // first step(last branch): from (v_1, ..., v_{N-1}, v_N) to (v_1, ..., v_{N-1}, u_{N-1}):
             const int last_branch = grid.get_dim() - 1;
             log_tree("before", "_init_integrate_branch", last_branch);
-            simplex_helper::_init_integrate_branch(working_tree, grid, kernels.empty() ? nullptr : &kernels.back());
+            simplex_helper::_init_integrate_branch(
+                working_tree, grid, kernels.empty() ? nullptr : &kernels.back(), method);
             log_tree("after", "_init_integrate_branch", last_branch);
 
             // other branch: from (v_1, ..., v_{k-1}, v_k, u_k) to (v_1, ..., v_{k-1}, u_{k-1})
             for (int branch_k = last_branch; branch_k > 0; --branch_k)
             {
                 log_tree("before", "_integrate_k_branch", branch_k);
-                simplex_helper::_integrate_k_branch(working_tree, grid, branch_k);
+                simplex_helper::_integrate_k_branch(
+                    working_tree, grid, branch_k, /*kernel=*/nullptr, method, simplex_logger.get());
                 log_tree("after", "_integrate_k_branch", branch_k);
             }
                 

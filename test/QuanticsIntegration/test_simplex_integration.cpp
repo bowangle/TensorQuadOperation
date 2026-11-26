@@ -5,6 +5,9 @@
 #include <type_float128_boost.h>
 #include "QuanticsIntegration/quantics_integrator_kD.hpp"
 
+#include <boost/multiprecision/cpp_int.hpp>
+#include <spdlog/logger.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <array>
 #include <cmath>
 #include <complex>
@@ -15,6 +18,9 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <numeric>
+#include <random>
 #include <sstream>
 #include <type_traits>
 #include <utility>
@@ -25,7 +31,7 @@ namespace {
 constexpr int bits = 4;
 constexpr int samples = 1 << bits;
 constexpr double h = 1.0 / samples;
-constexpr int plot_dataset_count = 3 * 3; // Dimensions × precisions.
+constexpr int plot_dataset_count = 3 * 3 + 2; // Three low-degree cases per precision and two double-only degree-29 cases.
 int plot_datasets_written = 0;
 
 double polynomial(int dimension, double x, double y = 0, double z = 0)
@@ -150,6 +156,167 @@ Real continuous_reference(int dimension, const Real& t)
         t * (Real(31) / Real(120) + t * Real(17) / Real(720))));
 }
 
+constexpr int rank30_degree = 29;
+constexpr int rank30 = rank30_degree + 1;
+constexpr int rank30_max_bond_dim = 100;
+constexpr double rank30_reltol = 1e4 * std::numeric_limits<double>::epsilon();
+// The polynomial has supremum 1e4 on the fitting cube [0,1)^3.
+const double rank30_scale = std::expm1(std::log(1e4) / rank30_degree) / 3.0;
+
+constexpr std::uint64_t choose_small(int n, int k)
+{
+    std::uint64_t value = 1;
+    for (int i = 1; i <= k; ++i)
+        value = value * (n - i + 1) / i;
+    return value;
+}
+
+template<typename Value>
+TensorQuadOperation::TTN<Value> make_rank30_polynomial_ttn(int bit_count)
+{
+    using Core = xfac_quad::Tensor3D<Value>;
+    using Real = typename Eigen::NumTraits<Value>::Real;
+    xfac_quad::TensorTree<Value> body(xfac_quad::makeTuckerTree(3, bit_count));
+    const auto& branches = *body.tree.branches;
+    for (const auto& branch : branches) {
+        for (int bit = 0; bit < bit_count; ++bit) {
+            const int node = branch.nodes.at(bit);
+            const int next = bit + 1 < bit_count ? branch.nodes.at(bit + 1) : branch.attachment;
+            const int right_axis = body.tree.neigh.at(node).pos(next);
+            const Real place(std::ldexp(1.0, bit - bit_count));
+            std::array<Real, rank30> powers;
+            powers[0] = Real(1);
+            for (int p = 1; p < rank30; ++p) powers[p] = powers[p - 1] * place;
+            const int left_dim = bit == 0 ? 1 : rank30;
+            Core core(right_axis == 1 ? left_dim : rank30,
+                      right_axis == 1 ? rank30 : left_dim, 2);
+            for (int p = 0; p < left_dim; ++p) {
+                // Shift the power basis from x to x + place when the bit is set.
+                for (int q = p; q < rank30; ++q) {
+                    const int row = right_axis == 1 ? p : q;
+                    const int col = right_axis == 1 ? q : p;
+                    if (p == q) core(row, col, 0) = Value(1);
+                    core(row, col, 1) = Value(Real(choose_small(q, p)) * powers[q - p]);
+                }
+            }
+            body.M.at(node) = std::move(core);
+        }
+    }
+    const int junction_id = branches.front().attachment;
+    const auto& neighbors = body.tree.neigh.at(junction_id);
+    const int x_axis = neighbors.pos(branches.at(0).nodes.back());
+    const int y_axis = neighbors.pos(branches.at(1).nodes.back());
+    const int z_axis = neighbors.pos(branches.at(2).nodes.back());
+    Core junction(rank30, rank30, rank30);
+    // Apply the scale to each total degree in the junction, keeping the branch bases unscaled.
+    std::array<Real, rank30> scale_powers;
+    scale_powers[0] = Real(1);
+    for (int r = 1; r < rank30; ++r)
+        scale_powers[r] = scale_powers[r - 1] * Real(rank30_scale);
+    std::array<int, 3> power{};
+    for (int a = 0; a <= rank30_degree; ++a) {
+        power[x_axis] = a;
+        for (int b = 0; b <= rank30_degree - a; ++b) {
+            power[y_axis] = b;
+            for (int c = 0; c <= rank30_degree - a - b; ++c) {
+                power[z_axis] = c;
+                const auto coefficient = choose_small(rank30_degree, a)
+                    * choose_small(rank30_degree - a, b) * choose_small(rank30_degree - a - b, c);
+                junction(power[0], power[1], power[2]) = Value(Real(coefficient) * scale_powers[a + b + c]);
+            }
+        }
+    }
+    body.M.at(junction_id) = std::move(junction);
+    return TensorQuadOperation::TTN<Value>(std::move(body), 0, Real(-1), /*w=*/-1);
+}
+
+class Rank30Reference {
+    using Integer = boost::multiprecision::cpp_int;
+    static constexpr int integrated_degree = rank30_degree + 3;
+    // The rounded double scale is in [2^-4, 2^-3), so it is exactly P / 2^56.
+    static constexpr int scale_bits = std::numeric_limits<double>::digits + 3;
+    static constexpr auto lcm = [] {
+        std::uint64_t value = 1;
+        for (int i = 3; i <= integrated_degree; ++i)
+            value = std::lcm(value, static_cast<std::uint64_t>(i));
+        return value;
+    }();
+
+    int bits_;
+    std::array<Integer, integrated_degree> differences_;
+    std::array<Integer, rank30> continuous_coefficients_;
+
+    template<typename Real>
+    static Real scaled_integer(Integer value, int denominator_bits)
+    {
+        if (value == 0) return Real(0);
+        // Keep 160 leading bits before conversion (more than any tested type).
+        const int shift = std::max(0, static_cast<int>(boost::multiprecision::msb(value)) + 1 - 160);
+        value >>= shift;
+        Real scaled(0);
+        using std::ldexp;
+        for (int exponent = shift - denominator_bits; value != 0; exponent += 32) {
+            const std::uint32_t chunk = static_cast<std::uint32_t>(value & 0xffffffffu);
+            scaled += ldexp(Real(chunk), exponent);
+            value >>= 32;
+        }
+        return scaled;
+    }
+
+public:
+    explicit Rank30Reference(int bit_count) : bits_(bit_count)
+    {
+        const Integer scale_numerator = static_cast<std::uint64_t>(std::ldexp(rank30_scale, scale_bits));
+        const Integer base_denominator = Integer(1) << (bits_ + scale_bits);
+        // At total gap m*h, the polynomial base is (D + P*m)/D, with D = 2^bits_ * 2^scale_bits.
+        // Sum the Newton expansion of choose(m+2,2) * (D + P*m)^29, then scale by h^3 / D^29.
+        std::array<Integer, integrated_degree> column;
+        for (int m = 0; m < integrated_degree; ++m) {
+            const Integer base_numerator = base_denominator + scale_numerator * m;
+            column[m] = (m + 1) * (m + 2) / 2;
+            for (int r = 0; r < rank30_degree; ++r) column[m] *= base_numerator;
+        }
+        for (int r = 0; r < integrated_degree; ++r) {
+            differences_[r] = column[0];
+            for (int m = 0; m + r + 1 < integrated_degree; ++m)
+                column[m] = column[m + 1] - column[m];
+        }
+        // Common denominator for 1/2 * sum_r choose(29,r) * c^r * t^(r+3)/(r+3).
+        Integer scale_power = 1;
+        for (int r = 0; r <= rank30_degree; ++r) {
+            continuous_coefficients_[r] = scale_power * choose_small(rank30_degree, r) * (lcm / (r + 3));
+            continuous_coefficients_[r] <<= (rank30_degree - r) * (bits_ + scale_bits);
+            scale_power *= scale_numerator;
+        }
+    }
+
+    template<typename Real>
+    Real discrete(util::i128 n) const
+    {
+        const Integer index(n);
+        Integer numerator = 0;
+        Integer binomial = index + 1;
+        for (int r = 0; r < integrated_degree && r <= n; ++r) {
+            numerator += differences_[r] * binomial;
+            binomial *= index - r;
+            binomial /= r + 2;
+        }
+        return scaled_integer<Real>(std::move(numerator), integrated_degree * bits_ + rank30_degree * scale_bits);
+    }
+
+    template<typename Real>
+    Real continuous(util::i128 n) const
+    {
+        const Integer index(n);
+        Integer numerator = 0;
+        for (int r = rank30_degree; r >= 0; --r)
+            numerator = numerator * index + continuous_coefficients_[r];
+        numerator *= index * index * index;
+        return scaled_integer<Real>(std::move(numerator), integrated_degree * bits_ + rank30_degree * scale_bits + 1)
+            / Real(lcm);
+    }
+};
+
 template<typename Real>
 Real relative_tolerance()
 {
@@ -270,10 +437,11 @@ TEMPLATE_TEST_CASE("30-bit simplex integration matches sampled inclusive grid su
     }
 }
 
-TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and continuous references",
-                   "[simplex]", double, dd_128, float128)
+namespace {
+
+template<typename Real, bool Rank30, bool FitWithTCI = false>
+void check_high_resolution_simplex(int dimension)
 {
-    using Real = TestType;
     using Value = std::complex<Real>;
     using Integrator = QuanticsIntegration::QuanticsIntegrator_kD<Value>;
     using std::abs;
@@ -282,22 +450,91 @@ TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and con
     constexpr int time_count = 1000;
     constexpr Index count = Index(1) << bit_count;
     const Real spacing = Real(1) / Real(count);
-    const int dimension = GENERATE(1, 2, 3);
     CAPTURE(dimension, bit_count);
+    const auto reference_at = [&](Index n, const Real& time) -> std::pair<Real, Real> {
+        if constexpr (Rank30) {
+            static const Rank30Reference reference(bit_count);
+            return {reference.template discrete<Real>(n), reference.template continuous<Real>(n)};
+        } else {
+            return {closed_form_reference(dimension, n, spacing), continuous_reference(dimension, time)};
+        }
+    };
 
     constexpr auto precision = std::is_same_v<Real, double> ? "double"
         : std::is_same_v<Real, dd_128> ? "dd_128" : "float128";
     const std::filesystem::path plot_dir("test/output/simplex_plot");
     std::filesystem::create_directories(plot_dir);
-    const auto dataset = plot_dir / (std::string(precision) + "_" + std::to_string(dimension) + "D");
+    const auto dataset = plot_dir / (std::string(precision) + "_" + std::to_string(dimension) + "D"
+                                     + (Rank30 ? "_rank30" : "") + (FitWithTCI ? "_tci" : ""));
 
     const typename Integrator::mGrid grid(std::vector<Real>(dimension, Real(0)),
                                           std::vector<Real>(dimension, Real(1)),
                                           std::vector<int>(dimension, bit_count));
-    const auto values = make_polynomial_ttn<Value>(dimension, bit_count);
+    const auto rank30_function = [](const std::vector<Real>& gaps) {
+        const Real base = Real(1) + Real(rank30_scale) * (gaps.at(0) + gaps.at(1) + gaps.at(2));
+        Real result(1);
+        for (int r = 0; r < rank30_degree; ++r) result *= base;
+        return Value(result);
+    };
+    const auto values = [&] {
+        if constexpr (FitWithTCI) {
+            static_assert(Rank30);
+            xfac_quad_runner::ttci_runner_opts<Value> options;
+            options.reltol = Real(rank30_reltol);
+            options.pivot1 = grid.coord_to_id({Real(0.5), Real(0.5), Real(0.5)});
+            options.fullPiv = true;
+            const xfac_quad_runner::ttci_runner_param<Value> parameters(/*nb_iter=*/8, rank30_max_bond_dim, options);
+
+            // Sample grid points directly from their bits with a reproducible seed.
+            constexpr std::uint64_t pivot_seed = 42;
+            constexpr int additional_pivot_count = 10;
+            std::mt19937_64 pivot_rng(pivot_seed);
+            typename Integrator::FitOptions fit_options;
+            fit_options.additional_pivots.reserve(additional_pivot_count);
+            std::vector<int> pivot_bits(grid.get_tensorLen());
+            for (int i = 0; i < additional_pivot_count; ++i) {
+                for (int& bit : pivot_bits)
+                    bit = static_cast<int>(pivot_rng() >> 63);
+                fit_options.additional_pivots.push_back(grid.id_to_coord(pivot_bits));
+            }
+            const auto fit_prefix = dataset.string() + "_fit";
+            const auto fit_log_path = fit_prefix + ".log";
+            auto fit_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(fit_log_path, /*truncate=*/true);
+            auto fit_logger = std::make_shared<spdlog::logger>(fit_log_path, fit_sink);
+            fit_logger->set_level(spdlog::level::info);
+            fit_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] %v");
+            fit_logger->flush_on(spdlog::level::info);
+            fit_logger->info("Additional random pivots: {} (seed: {})", additional_pivot_count, pivot_seed);
+            (void)Integrator::fit(grid, rank30_function, parameters, fit_prefix, fit_options, fit_logger);
+            // fit() saves the TTN; the integration helper accepts the tree directly.
+            return typename Integrator::mState(fit_prefix + ".tt", rank30_max_bond_dim, options.reltol, /*w=*/-1);
+        } else if constexpr (Rank30) {
+            return make_rank30_polynomial_ttn<Value>(bit_count);
+        } else {
+            return make_polynomial_ttn<Value>(dimension, bit_count);
+        }
+    }();
+    if constexpr (Rank30) {
+        if constexpr (FitWithTCI) {
+            std::cout << "TCI-fitted degree-29 input: max_chi=" << values.get_chi() << '\n';
+        } else {
+            REQUIRE(values.get_chi() == rank30);
+        }
+        const std::vector<Real> gaps{Real(1) / Real(2), Real(1) / Real(4), Real(1) / Real(8)};
+        const Value expected = rank30_function(gaps);
+        const Real error = abs(values.eval(grid.coord_to_id(gaps)) - expected);
+        CAPTURE(error);
+        if constexpr (FitWithTCI) {
+            // Still report the integration errors if the fitted input misses this check.
+            CHECK(error <= relative_tolerance<Real>() * abs(expected));
+        } else {
+            REQUIRE(error <= relative_tolerance<Real>() * abs(expected));
+        }
+    }
     const auto [integral, time_grid] = Integrator::make_integration_simplex(
         values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
-        /*max_bond_dim=*/16, /*reltol=*/Real(8) * Eigen::NumTraits<Real>::epsilon(),
+        /*max_bond_dim=*/Rank30 ? rank30_max_bond_dim : 16,
+        /*reltol=*/Rank30 ? Real(rank30_reltol) : Real(8) * Eigen::NumTraits<Real>::epsilon(),
         /*final_compress=*/true, /*path_logger=*/dataset.string() + "_");
     REQUIRE(time_grid.get_nBits() == bit_count);
     REQUIRE(time_grid.get_dx() == spacing);
@@ -313,13 +550,12 @@ TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and con
     const auto results = Integrator::integrate_simplex(integral, time_grid, times);
     REQUIRE(results.size() == times.size());
 
-    const Real end_value = closed_form_reference(dimension, count - 1, spacing);
+    const Real end_value = reference_at(count - 1, times.back()).first;
     const Real discrete_budget = relative_tolerance<Real>() * end_value;
     // Each degree-m term differs by replacing t^m with a product of m factors
     // t + (dimension - i)*h. Telescoping those products bounds the combined
     // quadrature error on [0,1) by 32*h for all three test polynomials.
-    const Real quadrature_budget = Real(32) * spacing;
-    const Real continuous_budget = discrete_budget + quadrature_budget;
+    const Real low_degree_quadrature_budget = Real(32) * spacing;
     std::ofstream csv(dataset.string() + ".csv");
     REQUIRE(csv.is_open());
     csv << "t,mps,discrete,continuous,abs_discrete,abs_continuous,rel_discrete,rel_continuous,abs_quadrature\n"
@@ -329,8 +565,7 @@ TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and con
     Real max_discrete_relative(0), max_continuous_relative(0);
     for (int i = 0; i < time_count; ++i) {
         const Real& time = times[i];
-        const Real discrete = closed_form_reference(dimension, indices[i], spacing);
-        const Real continuous = continuous_reference(dimension, time);
+        const auto [discrete, continuous] = reference_at(indices[i], time);
         const Real discrete_error = abs(results[i] - Value(discrete));
         const Real continuous_error = abs(results[i] - Value(continuous));
         const Real quadrature_error = abs(discrete - continuous);
@@ -352,7 +587,9 @@ TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and con
         csv << ',' << quadrature_error << '\n';
         CAPTURE(i, time, discrete_error, continuous_error, quadrature_error);
         CHECK(discrete_error <= discrete_budget);
-        CHECK(continuous_error <= continuous_budget);
+        // For degree 29, account for the exact pointwise quadrature bias.
+        const Real quadrature_budget = Rank30 ? quadrature_error : low_degree_quadrature_budget;
+        CHECK(continuous_error <= Real(discrete_budget + quadrature_budget));
     }
 
     csv.close();
@@ -360,13 +597,35 @@ TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and con
     ++plot_datasets_written;
     std::ostringstream report;
     report << std::scientific << std::setprecision(8)
-           << precision << ", " << dimension << "D, " << bit_count << " bits, " << time_count << " times\n"
+           << precision << ", " << dimension << "D, " << bit_count << " bits, " << time_count << " times"
+           << (Rank30 ? (FitWithTCI ? " (degree 29, TCI fit)" : " (degree 29)") : "") << '\n'
            << "  MPS vs discrete:   max abs=" << max_discrete
            << ", max rel (t>0)=" << max_discrete_relative << '\n'
            << "  MPS vs continuous: max abs=" << max_continuous
            << ", max rel (t>0)=" << max_continuous_relative << '\n'
            << "  Discrete vs continuous: max abs=" << max_quadrature << '\n';
     std::cout << report.str();
+}
+
+} // namespace
+
+TEMPLATE_TEST_CASE("High-resolution simplex integration against discrete and continuous references",
+                   "[simplex]", double, dd_128, float128)
+{
+    const int dimension = GENERATE(1, 2, 3);
+    check_high_resolution_simplex<TestType, false>(dimension);
+}
+
+TEMPLATE_TEST_CASE("High-resolution simplex integration of a rank-30 polynomial",
+                   "[simplex]", double)
+{
+    check_high_resolution_simplex<TestType, true>(3);
+}
+
+TEST_CASE("High-resolution simplex integration of a TCI-fitted rank-30 polynomial",
+          "[simplex][fit]")
+{
+    check_high_resolution_simplex<double, true, true>(3);
 }
 
 int main(int argc, char* argv[])

@@ -5,6 +5,7 @@
 #include "TensorQuadOperation/magic_tensor.hpp"
 #include "TensorQuadOperation/utc.hpp"
 #include <QTgrid-quad/grid.h>
+#include <spdlog/logger.h>
 
 #include <algorithm>
 #include <array>
@@ -239,8 +240,16 @@ void _integrate_k_branch(
     const qtgrid::MultQTGrid<Real, Sint>& grid,
     int branch_k,
     std::type_identity_t<const TensorQuadOperation::MPS<Scalar>*> kernel = nullptr,
-    const std::string& method = "zip-up")
+    const std::string& method = "zip-up",
+    spdlog::logger* logger = nullptr)
 {
+    const bool log_step = logger && logger->should_log(spdlog::level::info);
+    if (log_step)
+        logger->info("=================================\n_integrate_k_branch: {}\n=================================", branch_k);
+    const auto log_done = [&] {
+        if (log_step)
+            logger->info("=================================\n_integrate_k_branch: {} done\n=================================", branch_k);
+    };
     const auto& branches = tree.get_TTN_body().tree.branches;
     if (!branches || branches->size() < 2 || branch_k < 1 || branch_k >= grid.get_dim() ||
         static_cast<std::size_t>(branch_k) != branches->size() - 1)
@@ -252,8 +261,11 @@ void _integrate_k_branch(
     // ============================================================
     //              Substract
     // ============================================================
+    if (log_step)
+        logger->info("Tree before subtractor: max_chi = {}", tree.get_chi());
     auto branch_mpo = substract_branch(tree, branch_k - 1, method); // v_k -> uk-1, uk
-
+    if (log_step)
+        logger->info("Branch MPO: max_chi = {}", branch_mpo.get_chi());
     // ============================================================
     //              kernel if provided
     // ============================================================
@@ -264,7 +276,10 @@ void _integrate_k_branch(
     //              merge on uk
     // ============================================================
 
+    
     auto message = tree._copy_branch(branch_k); // uk
+    if (log_step)
+        logger->info("Message MPS: max_chi = {}", message.get_chi());
 
     using RealScalar = typename TensorQuadOperation::TTN<Scalar>::RealScalar;
     const RealScalar mpo_tol = branch_mpo.get_reltol();
@@ -285,6 +300,9 @@ void _integrate_k_branch(
         /*w=*/message.get_w(), message.get_ordering());
     // The method selects the subtractor only. Use untruncated zip-up for the merge.
     auto merged = branch_mpo._mul(message, "zip-up"); // Sum over u_k, leaving u_{k-1} open.
+
+    if (log_step)
+        logger->info("Merged MPS before compression: max_chi = {}", merged.get_chi());
 
     // Close the fused right bond before compression.
     const auto& body = tree.get_TTN_body();
@@ -357,8 +375,11 @@ void _integrate_k_branch(
     cores.back() = std::move(absorbed);
     merged = TensorQuadOperation::MPS<Scalar>(
         std::move(cores), merged_cap, merged_tol, /*w=*/-1, merged.get_ordering());
-    if (merged_cap > 0 || merged_tol >= RealScalar(0))
+    if (merged_cap > 0 || merged_tol >= RealScalar(0)) {
         merged.compress_svd(merged_tol, merged_cap);
+        if (log_step)
+            logger->info("Merged MPS after SVD compression: max_chi = {}", merged.get_chi());
+    }
     if (outgoing == -1) {
         // Store the closed t-MPS as a single leaf-to-endpoint branch.
         xfac_quad::TensorTree<Scalar> result;
@@ -380,6 +401,7 @@ void _integrate_k_branch(
         }
         tree = TensorQuadOperation::TTN<Scalar>(std::move(result),
             tree.get_max_bond_dim(), tree.get_reltol(), /*w=*/-1);
+        log_done();
         return;
     }
 
@@ -442,6 +464,7 @@ void _integrate_k_branch(
     }
     tree = TensorQuadOperation::TTN<Scalar>(std::move(reduced),
         tree.get_max_bond_dim(), tree.get_reltol(), /*w=*/-1);
+    log_done();
 }
 
 /// Compose the branch MPO with the diagonal kernel on the input time u_{k-1}.

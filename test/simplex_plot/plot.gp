@@ -9,11 +9,15 @@ set key opaque
 out = 'test/output/simplex_plot/'
 do for [precision in 'double dd_128 float128'] {
     bits = (precision eq 'double') ? 50 : 100
-    do for [dim=1:3] {
-        stem = out . sprintf('%s_%dD', precision, dim)
+    dataset_count = (precision eq 'double') ? 5 : 3
+    do for [dataset=1:dataset_count] {
+        dim = dataset > 3 ? 3 : dataset
+        suffix = dataset == 5 ? '_rank30_tci' : (dataset == 4 ? '_rank30' : '')
+        title_suffix = dataset == 5 ? ', degree 29 (TCI fit)' : (dataset == 4 ? ', degree 29 (explicit TTN)' : '')
+        stem = out . sprintf('%s_%dD%s', precision, dim, suffix)
         datafile = stem . '.csv'
         set output stem . '.svg'
-        set multiplot layout 3,1 title sprintf('Simplex integration: %s, %dD, %d bits (1000 samples)', precision, dim)
+        set multiplot layout 3,1 title sprintf('Simplex integration: %s, %dD, %d bits, 1000 samples%s', precision, dim, bits, title_suffix)
 
         unset logscale
         set xrange [0:1]
