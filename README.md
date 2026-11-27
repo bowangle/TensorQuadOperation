@@ -1,6 +1,6 @@
 # TensorQuadOperation
 
-A C++20 library for tensor trains, tree tensor networks, and quantics integration. It supports standard and extended precision through Eigen and `xfac_quad`, including `double`, Boost `float128`, and QD double-double (`dd_128`), with real and complex scalars where supported by the operation.
+A C++20 library for tensor trains, tree tensor networks, quantics integration, and tensor-network Fourier transforms. It supports standard and extended precision through Eigen and `xfac_quad`, including `double`, Boost `float128`, and QD double-double (`dd_128`), with real and complex scalars where supported by the operation.
 
 ## Documentation
 
@@ -8,8 +8,10 @@ A C++20 library for tensor trains, tree tensor networks, and quantics integratio
 |---|---|
 | [**TensorQuadOperation**](include/TensorQuadOperation/README.md) | `TT`, `MPS`, `MPO`, and `TTN`; tensor construction, arithmetic, canonicalization, compression, contraction, and discrete convolution. |
 | [**QuanticsIntegration**](include/QuanticsIntegration/README.md) | Grid-aware TCI fitting, definite and indefinite integration, rectangular queries, and weighted or unweighted simplex integration. |
+| [`fft_tn_quadp`](src/fft-tn-quadp/README.md) | Tensor-network FFT using QFT MPOs, quadrature and discontinuity corrections, and QFT precomputation. See also the [FFT derivation](latex_note/fft_notes_v2/fft_note_v2.tex). |
+| [`quad_integration`](include/quad_integration/integration_method.hpp) | A 1D interface for adaptive quadrature, quantics fitting and integration, and saving or loading integration parameters. |
 
-The integration layer uses the tensor layer, not the other way around.
+`QuanticsIntegration` and `fft_tn_quadp` use the core tensor operations. The `quad_integration` interface brings together adaptive quadrature from `fft_tn_quadp` and the 1D quantics integrator.
 
 ## Installation
 
@@ -30,11 +32,11 @@ bash install_extern.sh
 bash compile.sh
 ```
 
-`install_extern.sh` initializes the submodules and sets up the external dependencies. `compile.sh` configures a Release build with `-march=native` and builds the test executables in `build/`. To build without this project's test targets, configure CMake with `-DTQ_BUILD_TESTS=OFF`.
+`install_extern.sh` initializes the submodules and sets up the external dependencies. `compile.sh` configures a Release build with `-march=native` and builds the tools and test executables in `build/`. To build without this project's test targets, configure CMake with `-DTQ_BUILD_TESTS=OFF`.
 
 ## How to use it
 
-Add the repository as a CMake subdirectory and link your executable against the interface target. It exposes both public header trees and their dependencies.
+Add the repository as a CMake subdirectory and link your executable against the interface target. It exposes the public headers under `include/` and their dependencies.
 
 ```cmake
 add_subdirectory(TensorQuadOperation)
@@ -67,6 +69,11 @@ int main() {
 
 See the [tensor operations guide](include/TensorQuadOperation/README.md) for MPO application and contraction methods, and the [integration guide](include/QuanticsIntegration/README.md) for TCI fitting, rectangular queries, and weighted simplex integration.
 
+### Executables
+
+- `build/precompute_qft` builds and saves QFT MPOs in `mpo_data/data/`. Run `./build/precompute_qft --help` from the repository root for options. FFT tests can also generate missing cached MPOs on demand.
+- `build/integration_method` is a smoke executable for the `quad_integration` interface. Use `#include "quad_integration/integration_method.hpp"` from C++ to call the integration routines.
+
 ## Tests
 
 Run from the repository root:
@@ -90,14 +97,19 @@ The runners keep console logs beside the sources in `test/TensorQuadOperation/`,
 TensorQuadOperation/
 ├── include/
 │   ├── TensorQuadOperation/    # TT, MPS, MPO, TTN, and contraction helpers
-│   └── QuanticsIntegration/   # Grid-aware fitting and integration
+│   ├── QuanticsIntegration/   # Grid-aware fitting and integration
+│   ├── fft-tn-quadp/         # FFT, QFT MPOs, and adaptive quadrature
+│   └── quad_integration/     # High-level 1D integration interface
+├── src/
+│   ├── fft-tn-quadp/         # QFT precompute executable and plotting helper
+│   └── quad_integration/     # Integration interface smoke executable
 ├── test/
 │   ├── TensorQuadOperation/    # Tensor-operation tests and runner logs
 │   ├── QuanticsIntegration/   # Fitting and integration tests and runner logs
 │   ├── fft-tn-quadp/          # FFT/QFT tests and runner logs
 │   ├── simplex_plot/          # Plotting script and instructions
 │   └── output/               # Generated fixtures, diagnostic logs, and plots (ignored)
-├── latex_note/                # Convolution and simplex derivations
+├── latex_note/                # Convolution, simplex, and FFT derivations
 ├── extern/                    # xfac_quad and Catch2 submodules
 ├── build/                     # Generated CMake build directory
 ├── CMakeLists.txt
