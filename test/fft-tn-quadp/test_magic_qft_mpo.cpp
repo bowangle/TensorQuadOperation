@@ -1,11 +1,14 @@
-#include "magic_tensor_qft.hpp"
+#include "fft-tn-quadp/magic_tensor_qft.hpp"
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include <iostream>
 #include <cmath>
 #include <fstream>
-#include <sys/stat.h>
+#include <filesystem>
 #include <sstream>
+
+using TensorQuadOperation::MPO;
+namespace magic_tensor_qft = fft_tn_quadp::magic_tensor_qft;
 
 template<typename RealT>
 double to_double(RealT const& v) { return static_cast<double>(v); }
@@ -77,22 +80,23 @@ typename Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::Real default_tol(
 
 template<typename ComplexT>
 void test_error_range(const std::string& name, int r, int chi_max, int n_points = 1000){
-    // Create output directories
-    mkdir("test/output", 0755);
-    mkdir("test/output_compress", 0755);
+    const std::filesystem::path output_dir = "test/output/fft-tn-quadp";
+    const auto qft_dir = output_dir / "qft";
+    const auto compressed_dir = output_dir / "qft_compress";
+    std::filesystem::create_directories(qft_dir);
+    std::filesystem::create_directories(compressed_dir);
 
-    // Build filename: e.g. test/output/error_chi_max40_r30_complex_double.txt
+    // Build filename: e.g. error_chi_max40_r30_complex_double.txt
     std::string safe_name = name;
     for (auto& c : safe_name) {
         if (c == '<' || c == '>' || c == ':') c = '_';
     }
     std::ostringstream fname;
-    fname << "test/output/error_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
+    fname << qft_dir.string() << "/error_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
     std::ofstream out(fname.str());
 
-    // Compressed file in output_compress/
     std::ostringstream fname_comp;
-    fname_comp << "test/output_compress/error_compress_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
+    fname_comp << compressed_dir.string() << "/error_compress_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
     std::ofstream out_comp(fname_comp.str());
 
     std::cout << "Saving to " << fname.str() << "\n";

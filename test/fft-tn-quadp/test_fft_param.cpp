@@ -1,10 +1,12 @@
-#include "fft_param.hpp"
+#include "fft-tn-quadp/fft_param.hpp"
 #include "type_float128_boost.h"
 
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <type_traits>
+
+using fft_tn_quadp::fft_param;
 
 namespace {
 
@@ -20,8 +22,9 @@ bool exactly_equal(const Real& lhs, const Real& rhs)
 template <typename Real>
 bool test_roundtrip(const std::string& type_name)
 {
-    const std::filesystem::path path =
-        "fft_param_roundtrip_" + type_name + ".json";
+    const std::filesystem::path output_dir = "test/output/fft-tn-quadp/params";
+    std::filesystem::create_directories(output_dir);
+    const auto path = output_dir / ("fft_param_roundtrip_" + type_name + ".json");
     const Real reltol = Eigen::NumTraits<Real>::epsilon() * Real(137);
     const fft_param<Real> saved(9, 321, reltol, "fit", false);
 

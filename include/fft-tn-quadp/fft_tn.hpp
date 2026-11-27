@@ -12,12 +12,20 @@
 #include <type_traits>
 #include <vector>
 
-#include <mps_base.h>
-#include <mpo_base.h>
-#include <grid.h>
-#include <xf-qd-runner.hpp>
-#include "fft_param.hpp"
-#include "magic_tensor_qft.hpp"
+#include "TensorQuadOperation/mps_base.hpp"
+#include "TensorQuadOperation/mpo_base.hpp"
+#include <QTgrid-quad/grid.h>
+#include <xfac_quad_runner/xf-qd-runner.hpp>
+#include "fft-tn-quadp/fft_param.hpp"
+#include "fft-tn-quadp/magic_tensor_qft.hpp"
+
+namespace fft_tn_quadp {
+
+using TensorQuadOperation::MPO;
+using TensorQuadOperation::MPS;
+using qtgrid::QTGrid;
+using xfac_quad::Tensor3D;
+using xfac_quad_runner::load_fvalues_from_json;
 
 template <typename Cscalar, typename Sint>
 class FFTmps{
@@ -33,9 +41,10 @@ public:
         int max_chi_ = 200,
         RealScalar reltol_ = Eigen::NumTraits<RealScalar>::epsilon() * 100)
     :
-    mps(std::move(mps_)),
+    mps(TensorQuadOperation::TT<Cscalar>::change_ordering(std::move(mps_), 1)),
     grid(std::move(grid_)),
-    QFT_E_T(std::move(qft_mpo_)),
+    QFT_E_T(TensorQuadOperation::TT<Cscalar>::change_ordering(std::move(qft_mpo_), 1),
+            qft_mpo_.get_left_phys(), qft_mpo_.get_right_phys()),
     padding_bit(padding_bit_),
     reltol(reltol_),
     max_chi(max_chi_)
@@ -113,10 +122,11 @@ public:
         out.reserve(cores.size());
         for (int i = static_cast<int>(cores.size()) - 1; i >= 0; --i) {
             auto const& src = cores[i];
-            Tensor3D<Cscalar> dst(src.n_right, src.n_phys, src.n_left);
-            for (Eigen::Index l = 0; l < src.n_left; ++l)
-                for (Eigen::Index p = 0; p < src.n_phys; ++p)
-                    for (Eigen::Index r = 0; r < src.n_right; ++r)
+            // The FFT stores its cores in ordering 1: (left, physical, right).
+            Tensor3D<Cscalar> dst(src.n_slices, src.n_cols, src.n_rows);
+            for (Eigen::Index l = 0; l < src.n_rows; ++l)
+                for (Eigen::Index p = 0; p < src.n_cols; ++p)
+                    for (Eigen::Index r = 0; r < src.n_slices; ++r)
                         dst(r, p, l) = src(l, p, r);
             out.push_back(std::move(dst));
         }
@@ -397,6 +407,7 @@ public:
     // It cannot be recovered from the dual grid, so it must be supplied.
     // `do_shift` must match the value used in the forward transform.
     // WARNING TODO to test, cycle with fft -> ifft ->fft
+    // WARNING TODO not retested
     void ifft_vanilla(RealScalar a_primal, bool do_shift = true)
     {
         // 1. Undo the fftshift (swapping the MSB physical index is an involution)
@@ -416,7 +427,9 @@ public:
         mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N())) * dt;
 
         // 4. Apply the inverse QFT MPO
-        mps = dagger_mpo(QFT_E_T)._mul(mps);
+        // mps = dagger_mpo(QFT_E_T)._mul(mps);
+        auto inverse_qft = MPO<Cscalar>(QFT_E_T.conj(), QFT_E_T.get_left_phys(), QFT_E_T.get_right_phys()).transpose();
+        mps = inverse_qft._mul(mps);
 
         // 5. Reverse cores back to the original endianness
         mps = MPS<Cscalar>(reverse_cores(mps.get_core()), mps.get_max_bond_dim(),
@@ -444,7 +457,7 @@ private:
     static void _add_one_slow_bit(MPS<Cscalar>& mps, QTGrid<RealScalar, Sint>& grid)
     {
         auto cores = mps.get_core();
-        Eigen::Index chi_right = cores.back().n_right;
+        Eigen::Index chi_right = cores.back().n_slices;
         Tensor3D<Cscalar> new_core(chi_right, 2, 1);
         for (Eigen::Index r = 0; r < chi_right; ++r)
             new_core(r, 0, 0) = Cscalar(1, 0);
@@ -464,9 +477,9 @@ private:
     {
         auto cores = mps.get_core();
         auto& last = cores.back();
-        Tensor3D<Cscalar> swapped(last.n_left, last.n_phys, last.n_right);
-        for (Eigen::Index l = 0; l < last.n_left; ++l)
-            for (Eigen::Index r = 0; r < last.n_right; ++r) {
+        Tensor3D<Cscalar> swapped(last.n_rows, last.n_cols, last.n_slices);
+        for (Eigen::Index l = 0; l < last.n_rows; ++l)
+            for (Eigen::Index r = 0; r < last.n_slices; ++r) {
                 swapped(l, 0, r) = last(l, 1, r);
                 swapped(l, 1, r) = last(l, 0, r);
             }
@@ -709,3 +722,5 @@ private:
     }
 
 };
+
+} // namespace fft_tn_quadp

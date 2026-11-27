@@ -2,15 +2,22 @@
 // From previous calculation we saw that for our type, calculation at chi=35 is enough. 
 // Also, the compression only work if we did the construction with a bit more chi thant necessary.
 
-#include "parser_precompute_mpo_qft.hpp"
+#include "fft-tn-quadp/parser_precompute_mpo_qft.hpp"
 #include <iostream>
+#include <filesystem>
 #include <fstream>
 #include <algorithm>
 #include <chrono>
 #include <type_double_double.h>
 #include <type_float128_boost.h>
-#include <mpo_base.h>
-#include "magic_tensor_qft.hpp"
+#include "TensorQuadOperation/mpo_base.hpp"
+#include "fft-tn-quadp/magic_tensor_qft.hpp"
+
+using TensorQuadOperation::MPO;
+using fft_tn_quadp::BenchArgs;
+using fft_tn_quadp::parse_bench_args;
+using fft_tn_quadp::print_bench_usage;
+namespace magic_tensor_qft = fft_tn_quadp::magic_tensor_qft;
  
 template <typename T>
 T pow10(int n) {          // n >= 0
@@ -107,6 +114,7 @@ int main(int argc, char* argv[]) {
     }
 
     const std::string path = "mpo_data/data/";
+    std::filesystem::create_directories(path);
 
     if (args.use_double){
         compute_and_save<std::complex<double>>(args, "Cdouble", path);

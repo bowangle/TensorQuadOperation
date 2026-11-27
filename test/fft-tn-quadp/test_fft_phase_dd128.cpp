@@ -9,10 +9,16 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 
-#include "fft_tn.hpp"
-#include "magic_tensor_qft.hpp"
+#include "fft-tn-quadp/fft_tn.hpp"
+#include "fft-tn-quadp/magic_tensor_qft.hpp"
 #include "type_double_double.h"
 #include "type_int128.h"
+
+using fft_tn_quadp::FFTmps;
+using TensorQuadOperation::MPS;
+using qtgrid::QTGrid;
+using xfac_quad::Tensor3D;
+namespace magic_tensor_qft = fft_tn_quadp::magic_tensor_qft;
 
 namespace {
 

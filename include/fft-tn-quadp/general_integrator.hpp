@@ -19,7 +19,7 @@
 // Globally adaptive, finite-interval Gauss-Kronrod integration.  The public
 // interface is intentionally similar to scipy.integrate.quad: `limit` bounds
 // the number of active subintervals and `points` supplies known breakpoints.
-namespace general_integrator {
+namespace fft_tn_quadp::general_integrator {
 
 namespace detail {
 
@@ -415,4 +415,4 @@ auto quad(Function&& function,
     return integrate<Real>(std::forward<Function>(function), a, b, settings);
 }
 
-} // namespace general_integrator
+} // namespace fft_tn_quadp::general_integrator

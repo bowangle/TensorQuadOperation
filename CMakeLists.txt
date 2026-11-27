@@ -45,6 +45,16 @@ target_include_directories(tensorquad_testing INTERFACE
 target_include_directories(tensorquad_testing SYSTEM INTERFACE
     ${CATCH2_INCLUDE_DIR})
 
+# ---- FFT/QFT executable -----------------------------------------------------
+add_executable(precompute_qft src/fft-tn-quadp/precompute_qft.cpp)
+target_link_libraries(precompute_qft PRIVATE tensorquad_deps)
+target_compile_options(precompute_qft PRIVATE -Wall -Wextra -Wreorder -Wshadow)
+
+# ---- Quad integration executable -------------------------------------------
+add_executable(integration_method src/quad_integration/integration_method.cpp)
+target_link_libraries(integration_method PRIVATE tensorquad_deps)
+target_compile_options(integration_method PRIVATE -Wall -Wextra -Wreorder -Wshadow)
+
 # ---- tests (leaf targets: nothing may ever depend on these) -------------------
 if(TQ_BUILD_TESTS)
     if(NOT EXISTS ${CATCH2_INCLUDE_DIR}/catch2/catch.hpp)
@@ -85,5 +95,26 @@ if(TQ_BUILD_TESTS)
         # Shared fixtures and generated data remain relative to the project root.
         set_tests_properties(${_target} PROPERTIES
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endforeach()
+
+    set(_fft_tn_tests
+        magic_qft_mpo
+        general_integrator
+        fft_param
+        fft_vanilla
+        fft_double
+        fft_convergence_double
+        fft_convergence_dd128
+        fft_phase_dd128
+        fft_dd128
+        fft_float128)
+
+    foreach(_name IN LISTS _fft_tn_tests)
+        set(_target fft_tn_test_${_name})
+        add_executable(${_target} test/fft-tn-quadp/test_${_name}.cpp)
+        target_link_libraries(${_target} PRIVATE tensorquad_deps tensorquad_testing)
+        target_compile_options(${_target} PRIVATE -Wall -Wextra -Wreorder -Wshadow -UNDEBUG)
+        add_test(NAME ${_target} COMMAND ${_target})
+        set_tests_properties(${_target} PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     endforeach()
 endif()

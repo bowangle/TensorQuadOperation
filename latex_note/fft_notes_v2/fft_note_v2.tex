@@ -1,0 +1,390 @@
+\documentclass{article}
+
+\usepackage[english]{babel}
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{braket}
+
+\title{FFT conventions: vanilla, trapezoid, and piecewise-continuous}
+\author{}
+\date{}
+
+\begin{document}
+	\maketitle
+	
+	\section{Conventions}
+	
+	\subsection{The transform pair}
+	
+	We use the physics convention
+	\begin{align}
+		g^{c}(\tau) &= \frac{1}{2\pi}\int_a^b dE\; g^c(E)\, e^{-iE\tau}, \\
+		g^{c}(E)    &= \int d\tau\; g^c(\tau)\, e^{+iE\tau}.
+	\end{align}
+	
+	The energy integral is over a \emph{finite} window $[a,b]$. Every difficulty in
+	what follows comes from that finiteness: the discrete transform implicitly
+	treats the data as periodic with period $b-a$, and unless $g^c$ happens to be
+	smooth and periodic on that window, the mismatch at the boundary controls the
+	error.
+	
+	\subsection{The energy grid}
+	
+	We discretise $[a,b]$ with $N$ points:
+	\begin{align}
+		E_n &= a + n\,\Delta E, \qquad n = 0,\dots,N-1, \\
+		\Delta E &= \frac{b-a}{N}.
+	\end{align}
+	
+	The essential structural fact, which drives all of Section~\ref{sec:trapez}:
+	\begin{align}
+		\boxed{\;a = E_0 \in \text{grid}, \qquad b = a + N\Delta E \notin \text{grid}.\;}
+	\end{align}
+	The grid includes $a$ but excludes $b$. There are $N$ points but $N$ intervals, and the
+	right endpoint is missing. This is not a choice --- it is forced by the FFT,
+	which requires exactly $N$ equally spaced samples of a period.
+	
+	\subsection{The time grid}
+	
+	Discretising $\tau_m = m\,\Delta\tau$ and requiring the kernel to match the DFT
+	kernel fixes the reciprocity relation
+	\begin{align}
+		\boxed{\;\Delta E\,\Delta\tau = \frac{2\pi}{N}.\;}
+	\end{align}
+	
+	The index $m$ is read in two's complement, so that the second half of the array
+	carries negative times:
+	\begin{align}
+		\tau_m = \begin{cases}
+			m\,\Delta\tau       & 0 \le m < N/2 \quad \text{(positive times)},\\[2pt]
+			(m-N)\,\Delta\tau   & N/2 \le m < N \quad \text{(negative times)}.
+		\end{cases}
+		\label{eq:twos}
+	\end{align}
+	Equivalently: writing $m$ in binary with $R$ bits, every bit contributes $+2^k$
+	except the most significant, which contributes $-2^{R-1}$.
+	
+	The largest representable time is
+	\begin{align}
+		\tau_{\max} = \frac{N}{2}\Delta\tau = \frac{\pi}{\Delta E},
+	\end{align}
+	which will matter in Section~\ref{sec:tau}.
+	
+	\section{Vanilla FFT}
+	
+	\subsection{Derivation}
+	
+	Replacing the integral by a left Riemann sum,
+	\begin{align}
+		g^{c}(\tau) &\simeq \frac{\Delta E}{2\pi} \sum_{n=0}^{N-1} g^c(E_n)\,e^{-iE_n\tau},
+	\end{align}
+	and evaluating at $\tau = \tau_m$ with $E_n = a + n\Delta E$,
+	\begin{align}
+		g^{c}(\tau_m) &= \frac{\Delta E}{2\pi} \sum_{n=0}^{N-1} g^c(E_n)\,
+		e^{-i(a + n\Delta E)m\Delta\tau} \\
+		&= e^{-ia\tau_m}\,\frac{\Delta E}{2\pi} \sum_{n=0}^{N-1} g^c(E_n)\,
+		e^{-i\,nm\,\Delta E\,\Delta\tau} \\
+		&= e^{-ia\tau_m}\,\frac{\Delta E}{2\pi} \sum_{n=0}^{N-1} g^c(E_n)\,
+		e^{-2i\pi nm/N},
+		\label{eq:vanilla}
+	\end{align}
+	where the last line used the reciprocity relation. The sum is exactly the DFT\@.
+	
+	\subsection{Mapping onto the QFT}
+	
+	The QFT is the DFT with a symmetric normalisation:
+	\begin{align}
+		\widehat{QFT}_{mn} = \frac{1}{\sqrt{N}}e^{-2i\pi nm/N}.
+	\end{align}
+	So the bare DFT sum is $\sqrt{N}\,\widehat{QFT}$, and~\eqref{eq:vanilla} becomes
+	\begin{align}
+		\boxed{\;\ket{g_\tau} = \frac{\Delta E}{2\pi}\,\hat{P}\,\sqrt{N}\,
+			\widehat{QFT}\,\ket{g_E}\;}
+		\label{eq:vanilla_mps}
+	\end{align}
+	with $\ket{g_E}$ the MPS holding $g^c(E_n)$ and $\hat{P}$ the diagonal phase MPO
+	\begin{align}
+		\hat{P}_{mm} = e^{-ia\tau_m}.
+	\end{align}
+	
+	\subsection{The steps, in order}
+	
+	\begin{enumerate}
+		\item \textbf{Reverse cores.} The MPS is stored LSB-first; the QFT MPO
+		expects MSB-first. This is bookkeeping, not mathematics, but every
+		subsequent bit-string index depends on which side of this step it
+		sits on.
+		\item \textbf{Apply $\widehat{QFT}$.}
+		\item \textbf{Multiply by $\sqrt{N}$}, undoing the QFT's symmetric
+		normalisation to recover the bare DFT sum.
+		\item \textbf{Multiply by $\Delta E/2\pi$}, the measure of the Riemann sum.
+		\item \textbf{Apply $\hat{P}$}, the phase from the grid origin.
+		$\hat{P}$ is a product state of $R$ single-site phases: bit $k$
+		contributes $e^{\mp i a \Delta\tau 2^k}$, with the sign flipped on the
+		MSB to implement~\eqref{eq:twos}. This sign flip is essential ---
+		$e^{-ia\tau_m}$ is \emph{not} periodic in $m$ unless $a/\Delta E$ is an
+		integer, so the negative-time half genuinely needs the two's-complement
+		value of $\tau_m$.
+		\item \textbf{Optional shift} (Section~\ref{sec:shift}).
+		\item \textbf{Replace the grid by its dual}, $E\to\tau$,
+		$\Delta E \to \Delta\tau = 2\pi/(N\Delta E)$.
+	\end{enumerate}
+	
+	\subsection{The shift step}\label{sec:shift}
+	
+	The DFT returns $m = 0,\dots,N-1$, i.e.\ all positive times followed by all
+	negative times. For plotting one wants monotonically increasing time,
+	$m' = -N/2,\dots,N/2-1$. The shift is the cyclic permutation
+	\begin{align}
+		m \;\longmapsto\; \left(m + \tfrac{N}{2}\right) \bmod N.
+	\end{align}
+	
+	In binary this is remarkably cheap. Adding $N/2 = 2^{R-1}$ modulo $N$ flips the
+	most significant bit and touches nothing else, because there is no carry out of
+	the MSB once the result is reduced mod $N$. So the shift is implemented by
+	\emph{swapping the two physical indices of the MSB core}:
+	\begin{align}
+		A^{(R)}_{\alpha,\,s,\,\beta} \;\longmapsto\; A^{(R)}_{\alpha,\,1-s,\,\beta}.
+	\end{align}
+	It is an involution --- applying it twice restores the original --- costs
+	$O(1)$, and does not change the bond dimension. Note that it must be applied
+	\emph{after} $\hat{P}$, since $\hat{P}$ is built against the unshifted index.
+	
+	\section{Trapezoid correction}\label{sec:trapez}
+	
+	\subsection{Why the vanilla scheme is only first order}
+	
+	Compare the two quadratures over $[a,b]$ with $h = \Delta E$. The left rectangle
+	rule that~\eqref{eq:vanilla} implements obeys
+	\begin{align}
+		h\sum_{n=0}^{N-1} f(E_n) = \int_a^b f\,dE
+		+ \frac{h}{2}\big[f(b) - f(a)\big] + O(h^2),
+		\label{eq:rect}
+	\end{align}
+	while the trapezoid rule obeys the Euler\textendash{}Maclaurin expansion
+	\begin{align}
+		h\left[\tfrac12 f(a) + \sum_{n=1}^{N-1} f(E_n) + \tfrac12 f(b)\right]
+		= \int_a^b f\,dE + \frac{h^2}{12}\big[f'(b) - f'(a)\big] + O(h^4).
+		\label{eq:em}
+	\end{align}
+	
+	The two differ by exactly $\tfrac{h}{2}[f(b)-f(a)]$, which is the leading error
+	term in~\eqref{eq:rect}. The trapezoid rule therefore \emph{cancels the first
+		order term identically}, and
+	\begin{align}
+		\boxed{\;\text{error: } O(N^{-1}) \;\longrightarrow\; O(N^{-2}).\;}
+	\end{align}
+	
+	This is a genuine gain in order, not a constant factor. If the boundary term
+	$f(b)-f(a)$ happens to vanish --- a smooth periodic integrand --- both rules are
+	already high order and Euler\textendash{}Maclaurin telescopes to give exponential
+	convergence; this is the regime of the ``smooth and periodic'' figure. The
+	trapezoid correction matters precisely when it does not vanish.
+	
+	\subsection{The obstacle, and the correction}
+	
+	Equation~\eqref{eq:em} requires $f(b)$, which is not on the grid. So $g^c(b)$
+	must be supplied externally --- it cannot be recovered from the MPS\@. Given it,
+	the corrected weights are
+	\begin{align}
+		\tilde{g}^c(E_n) = \begin{cases}
+			\tfrac12\,g^c(E_0) & n = 0,\\
+			g^c(E_n)           & 1 \le n \le N-1,
+		\end{cases}
+		\qquad \text{plus } \tfrac12 g^c(b) \text{ at } E = b,
+	\end{align}
+	giving
+	\begin{align}
+		g^{c}(\tau_m) = e^{-ia\tau_m}\frac{\Delta E}{2\pi}
+		\left[\sum_{n=0}^{N-1} \tilde{g}^c(E_n)e^{-2i\pi nm/N}
+		+ \tfrac12 g^c(b)\right].
+		\label{eq:trapez_scalar}
+	\end{align}
+	
+	\subsection{Why $b$ can be folded onto index $0$}
+	
+	The reason the $g^c(b)$ term in~\eqref{eq:trapez_scalar} carries the same
+	prefactor $e^{-ia\tau_m}$ as everything else, with no extra oscillation, is the
+	aliasing identity
+	\begin{align}
+		e^{-ib\tau_m} = e^{-ia\tau_m}\,e^{-iN\Delta E\,\tau_m}
+		= e^{-ia\tau_m}\,e^{-2i\pi m}
+		= e^{-ia\tau_m},
+		\label{eq:alias}
+	\end{align}
+	valid for every integer $m$, and in particular for $m-N$ as well, so it holds on
+	both halves of~\eqref{eq:twos}. The point $b$ is indistinguishable from the
+	point $a$ as far as the discrete kernel is concerned: it \emph{is} index $0$.
+	
+	This makes the correction a single-point modification of the input:
+	\begin{align}
+		\boxed{\;\tilde{g}^c(E_0) = \tfrac12\big[g^c(a) + g^c(b)\big],
+			\qquad \tilde{g}^c(E_n) = g^c(E_n)\ \ (n \ge 1).\;}
+		\label{eq:trapez_merged}
+	\end{align}
+	
+	\subsection{Operator form}
+	
+	Let $\ket{\delta_j}$ be the MPS with a single $1$ at index $j$ and zero
+	elsewhere (bond dimension $1$). Then
+	\begin{align}
+		\boxed{\;\ket{g_\tau} = \frac{\Delta E}{2\pi}\,\hat{P}\,\sqrt{N}\,\widehat{QFT}
+			\left[\ket{g_E} + \frac{g^c(b) - g^c(a)}{2}\ket{\delta_0}\right].\;}
+		\label{eq:trapez_mps}
+	\end{align}
+	
+	Compared with~\eqref{eq:vanilla_mps}, the entire trapezoid rule is one
+	bond-dimension-1 addition applied before the transform. Nothing after the
+	bracket changes.
+	
+	\paragraph{With zero padding.} If the grid is padded to $N = 2^p N_0$ by
+	appending zeros, then $b$ \emph{is} a grid point, at index $N_0$, and~\eqref{eq:alias} no longer applies. The correction splits into two deltas:
+	\begin{align}
+		\ket{g_\tau} = \frac{\Delta E}{2\pi}\,\hat{P}\,\sqrt{N}\,\widehat{QFT}
+		\left[\ket{g_E} - \frac{g^c(a)}{2}\ket{\delta_0}
+		+ \frac{g^c(b)}{2}\ket{\delta_{N_0}}\right].
+	\end{align}
+	Padding does not degrade the quadrature: the zeros contribute nothing, and the
+	computed quantity is still exactly the trapezoid rule on $[a,b]$. Its only
+	effect is to refine the $\tau$ grid, i.e.\ to interpolate. Note that padding
+	does \emph{not} smooth the boundary --- if $g^c(a),g^c(b) \neq 0$ it hard-codes
+	the jump into the data.
+	
+	\subsection{The error grows with $\tau$}\label{sec:tau}
+	
+	The Euler\textendash{}Maclaurin term in~\eqref{eq:em} involves the derivative of the
+	\emph{full} integrand $f(E) = g^c(E)e^{-iE\tau}$, not of $g^c$ alone:
+	\begin{align}
+		f'(E) = \big[\,{g^c}'(E) - i\tau\, g^c(E)\big]e^{-iE\tau},
+	\end{align}
+	so, using~\eqref{eq:alias},
+	\begin{align}
+		f'(b) - f'(a) = e^{-ia\tau_m}\Big[
+		\big({g^c}'(b) - {g^c}'(a)\big)
+		- i\tau_m\big(g^c(b) - g^c(a)\big)\Big].
+	\end{align}
+	
+	The jump in $g^c$ itself reappears, multiplied by $\tau_m$. The error is
+	therefore
+	\begin{align}
+		\varepsilon(\tau) \sim \frac{\Delta E^2}{12}
+		\Big[\Delta{g^c}' - i\tau\,\Delta g^c\Big],
+	\end{align}
+	and at the edge of the time grid, $\tau_{\max} = \pi/\Delta E$,
+	\begin{align}
+		\Delta E^2 \cdot \tau_{\max} = \pi\,\Delta E = O(N^{-1}).
+	\end{align}
+	
+	\paragraph{Consequence.} The $O(N^{-2})$ rate holds at fixed $\tau$; convergence
+	plots must be made at fixed small $\tau$ for the claimed rate to be visible. At
+	long times the scheme degrades back to $O(N^{-1})$. For a Green's function this
+	is exactly the regime of interest, so the limitation should be stated rather
+	than hidden.
+	
+	\section{Piecewise-continuous case}
+	
+	\subsection{Setup}
+	
+	Suppose $g^c$ has jump discontinuities at interior points
+	$d_1 < \cdots < d_K$ in $(a,b)$. The trapezoid rule of Section~\ref{sec:trapez}
+	does not help: it corrects the boundary of $[a,b]$, while the leading error now
+	comes from the interior jumps, restoring $O(N^{-1})$.
+	
+	The remedy is to apply the trapezoid rule on \emph{each} continuous sub-interval
+	$[d_j, d_{j+1}]$, with $d_0 \equiv a$ and $d_{K+1} \equiv b$.
+	
+	\subsection{Strict conditions}
+	
+	\begin{enumerate}
+		\item \textbf{Each $d_j$ falls exactly on a grid point.} If a jump sits
+		between samples, no choice of weights can represent it and the error
+		returns to $O(N^{-1})$. This is the condition most easily violated in
+		practice.
+		\item \textbf{$d_j$ is the first point of the interval to its right}, so
+		subintervals are half-open, $d_j\le E<d_{j+1}$, and the value stored on
+		the grid at $d_j$ is the \emph{right} limit $g^c(d_j^+)$.
+		\item \textbf{The externally supplied values are left limits,}
+		$g^c(d_j^-)$. The grid holds one value per point, and by condition 2
+		that value is the right limit; the left limit is the missing
+		information, exactly as $g^c(b)$ was in the smooth case.
+		\item \textbf{All sub-intervals share one global grid} (same $N$, same
+		$\Delta E$, same $a$). If instead each sub-interval were transformed at
+		its own length $L_j$, each result would land on its own time grid with
+		$\Delta\tau_j = 2\pi/L_j$, and the pieces could not be added.
+		\item \textbf{The phase uses the global $a$,} not the left edge of the
+		sub-interval, since the restricted data live at global indices.
+	\end{enumerate}
+	
+	\subsection{The correction collapses}
+	
+	Write $\chi_j$ for the indicator of $d_j\le E<d_{j+1}$ and apply~\eqref{eq:trapez_scalar}
+	to each piece. Summing, the indicators partition the grid and reconstruct $g^c$; only the endpoint corrections survive. At an
+	interior point $d_j$ two of them coincide:
+	\begin{align}
+		\underbrace{-\tfrac12 g^c(d_j^+)}_{\text{left end of piece } j}
+		+ \underbrace{\tfrac12 g^c(d_j^-)}_{\text{right end of piece } j-1}
+	\end{align}
+	so that the stored value $g^c(d_j^+)$ is replaced by
+	\begin{align}
+		\boxed{\;\tilde{g}^c(d_j) = \tfrac12\big[g^c(d_j^-) + g^c(d_j^+)\big].\;}
+		\label{eq:disc}
+	\end{align}
+	
+	This is the same averaging of one-sided limits as~\eqref{eq:trapez_merged}, and
+	indeed~\eqref{eq:trapez_merged} is the special case $j=0$ where the two sides of
+	the ``jump'' are $b$ and $a$ glued by periodicity.
+	
+	\subsection{Operator form}
+	
+	\begin{align}
+		\boxed{\;
+			\ket{g_\tau} = \frac{\Delta E}{2\pi}\,\hat{P}\,\sqrt{N}\,\widehat{QFT}
+			\left[\ket{g_E}
+			+ \frac{g^c(b)-g^c(a)}{2}\ket{\delta_0}
+			+ \sum_{j=1}^{K} \frac{g^c(d_j^-) - g^c(d_j^+)}{2}\ket{\delta_{n_j}}
+			\right]\;}
+	\end{align}
+	with $n_j = (d_j - a)/\Delta E$ the integer index of the $j$-th jump.
+	
+	\paragraph{Remarks.}
+	\begin{itemize}
+		\item The whole scheme is $K+1$ bond-dimension-$1$ additions followed by a
+		\emph{single} transform. Splitting into $K+1$ separate transforms and
+		summing the results is mathematically equivalent but costs $K+1$ QFTs,
+		requires $K+1$ interval-restriction MPOs, and accumulates bond
+		dimension in the sum.
+		\item All evaluations $g^c(d_j^+)$ must be read from the unmodified MPS
+		before any correction is applied.
+		\item Since the corrections are additive and disjoint, the recovered
+		convergence is $O(N^{-2})$ per jump, subject to the same $\tau$
+		dependence as Section~\ref{sec:tau}.
+	\end{itemize}
+	
+	\section{Summary}
+	
+	\begin{center}
+		\begin{tabular}{lll}
+			\hline% chktex 44
+			Scheme & Input modification & Error at fixed $\tau$ \tabularnewline%
+			\hline% chktex 44
+			Vanilla & none & $O(N^{-1})$ \tabularnewline%
+			Trapezoid & $\tilde{g}(E_0) = \tfrac12[g(a)+g(b)]$ & $O(N^{-2})$ \tabularnewline%
+			Piecewise & additionally $\tilde{g}(d_j) = \tfrac12[g(d_j^-)+g(d_j^+)]$ & $O(N^{-2})$ \tabularnewline%
+			\hline% chktex 44
+		\end{tabular}
+	\end{center}
+	
+	In all three cases the transform itself is identical --- reverse, $\widehat{QFT}$,
+	$\sqrt{N}$, $\Delta E/2\pi$, $\hat{P}$, shift. Only the input vector differs, and
+	only in $K+1$ entries.
+	
+	To go beyond $O(N^{-2})$, more grid points are not the answer: the appropriate
+	tools for oscillatory Fourier integrals are Filon-type quadrature or
+	higher-order Euler\textendash{}Maclaurin endpoint corrections using $g^{c\prime}$ at the
+	boundary.
+	
+\end{document}

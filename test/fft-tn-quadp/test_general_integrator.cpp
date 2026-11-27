@@ -7,7 +7,9 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 
-#include "general_integrator.hpp"
+#include "fft-tn-quadp/general_integrator.hpp"
+
+namespace general_integrator = fft_tn_quadp::general_integrator;
 
 namespace {
 

@@ -22,6 +22,8 @@
 #include <string>
 #include <string_view>
 
+namespace fft_tn_quadp {
+
 struct BenchArgs {
     bool use_double   = false;
     bool use_float128 = false;
@@ -138,3 +140,5 @@ inline BenchArgs parse_bench_args(int argc, char* argv[]) {
     }
     return args;
 }
+
+} // namespace fft_tn_quadp

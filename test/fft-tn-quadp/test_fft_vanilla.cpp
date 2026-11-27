@@ -1,10 +1,14 @@
-#include "fft_tn.hpp"
+#include "fft-tn-quadp/fft_tn.hpp"
 #include "type_int128.h"
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include <iostream>
 #include <chrono>
 #include <random>
+
+using fft_tn_quadp::FFTmps;
+
+static constexpr auto fixture_prefix = "test/fft-tn-quadp/gE<_site[[1, 0], [0, 0]]";
 
 template<typename Cscalar, typename Sint>
 void test_fft_construction(const std::string& type_name, const Sint padding_bit_)
@@ -13,7 +17,7 @@ void test_fft_construction(const std::string& type_name, const Sint padding_bit_
     auto t0 = std::chrono::high_resolution_clock::now();
     try {
         FFTmps<Cscalar, Sint> fft(
-            "test/gE<_site[[1, 0], [0, 0]]",    // prefix_mps
+            fixture_prefix,                    // prefix_mps
             "mpo_data/data/",                   // folder_qft_data
             padding_bit_                        // padding bit
         );
@@ -32,7 +36,7 @@ void test_fft_fft_vanilla_execution(const std::string& type_name, const Sint pad
     auto t0 = std::chrono::high_resolution_clock::now();
     try {
         FFTmps<Cscalar, Sint> fft(
-            "test/gE<_site[[1, 0], [0, 0]]",    // prefix_mps
+            fixture_prefix,                    // prefix_mps
             "mpo_data/data/",                   // folder_qft_data
             padding_bit_                        // padding bit
         );
@@ -54,7 +58,7 @@ void test_fft_ifft_roundtrip(const std::string& type_name, const Sint padding_bi
         using Real = typename FFTmps<Cscalar, Sint>::RealScalar;
 
         FFTmps<Cscalar, Sint> fft(
-            "test/gE<_site[[1, 0], [0, 0]]",
+            fixture_prefix,
             "mpo_data/data/",
             padding_bit_
         );

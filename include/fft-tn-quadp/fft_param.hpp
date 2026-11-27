@@ -14,6 +14,8 @@
 
 #include <type_double_double.h>
 
+namespace fft_tn_quadp {
+
 namespace fft_param_detail {
 
 template <typename Real>
@@ -172,3 +174,5 @@ private:
         };
     }
 };
+
+} // namespace fft_tn_quadp

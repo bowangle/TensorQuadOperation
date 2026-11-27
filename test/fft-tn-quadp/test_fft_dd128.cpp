@@ -9,10 +9,13 @@
 #define CATCH_CONFIG_RUNNER
 #include <catch2/catch.hpp>
 
-#include "fft_tn.hpp"
+#include "fft-tn-quadp/fft_tn.hpp"
 #include "type_double_double.h"
 #include "type_int128.h"
-#include "test_common.hpp"
+#include "fft-tn-quadp/test_common.hpp"
+
+using fft_tn_quadp::FFTmps;
+namespace fft_tn_test = fft_tn_quadp::fft_tn_test;
 
 namespace {
 
@@ -71,7 +74,7 @@ TEST_CASE("dd128 FFT test data can be saved and reloaded", "[fft][dd128]")
     constexpr std::size_t N = std::size_t(1) << n_bit;
     constexpr std::size_t padded_N = N << padding_bit;
     constexpr std::size_t padded_sample_count = 128;
-    const std::string output_path = "test/output_fft_test";
+    const std::string output_path = "test/output/fft-tn-quadp/fft_test";
 
     std::filesystem::create_directories(output_path);
 

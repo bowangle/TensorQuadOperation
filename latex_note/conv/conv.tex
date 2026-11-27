@@ -114,7 +114,7 @@ The discrete convolution can then be expressed as
     \boxed{
     F_m \approx \Delta t
     \sum_{j,k=0}^{L-1}
-    \Theta_{mjk}S_jK_k.
+    \Theta_{mjk}\,S_j\,K_k.
     }
 \end{equation}
 
@@ -137,9 +137,9 @@ The physical grids satisfy
 \begin{equation}
     \boxed{
     \begin{aligned}
-        \mathcal{G}_S &= [T_0,T_M[,\\
-        \mathcal{G}_K &= [0,T_M-T_0[,\\
-        \mathcal{G}_F &= [T_0,T_M[.
+        \mathcal{G}_S &= \lbrack T_0,T_M\mathclose{\lbrack},\\
+        \mathcal{G}_K &= \lbrack 0,T_M-T_0\mathclose{\lbrack},\\
+        \mathcal{G}_F &= \lbrack T_0,T_M\mathclose{\lbrack}.
     \end{aligned}
     }
 \end{equation}
@@ -166,7 +166,7 @@ When $T_0=0$, the three grids coincide:
 \begin{equation}
     \boxed{
     \mathcal{G}_S=\mathcal{G}_K=\mathcal{G}_F
-    =[0,T_M[.
+    =\lbrack 0,T_M\mathclose{\lbrack}.
     }
 \end{equation}
 
@@ -227,7 +227,7 @@ Then the desired response is a convolution of these two inputs:
     }
 \end{equation}
 Both input arrays are indexed by elapsed coordinates on
-$[0,T_M-T_0[$, with the same number of points and spacing $\Delta t$.
+$\lbrack 0,T_M-T_0\mathclose{\lbrack}$, with the same number of points and spacing $\Delta t$.
 Thus, after applying the quadrature convention, a helper such as
 \texttt{make\_indefinite\_integral\_conv} is intended to construct
 \begin{equation}
@@ -241,7 +241,7 @@ its diagonal endpoint term vanishes and $R_0=0$.
 The final calculation therefore consists only of evaluating the response
 MPS and multiplying by $U$. If its returned grid represents elapsed time,
 evaluate it at $t-T_0$. If the same array is assigned the physical-time
-grid $[T_0,T_M[$ instead, evaluate it at $t$. For $T_0=0$, these coordinates
+grid $\lbrack T_0,T_M\mathclose{\lbrack}$ instead, evaluate it at $t$. For $T_0=0$, these coordinates
 coincide. The grid-spacing factor is applied during response construction,
 not again during evaluation, and there is no need to subtract the origin
 value for the ramp with $\lambda(T_0)=0$.

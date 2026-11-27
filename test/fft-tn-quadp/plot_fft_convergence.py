@@ -101,7 +101,7 @@ def main():
         "output_root",
         nargs="?",
         type=Path,
-        default=Path("test/output_fft_conv"),
+        default=Path("test/output/fft-tn-quadp/fft_conv"),
         help="directory containing the double and dd128 result folders",
     )
     parser.add_argument("--show", action="store_true")

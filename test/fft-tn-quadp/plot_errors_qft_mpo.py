@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Load error data files from test/output/ and test/output_compress/ and plot:
+Load error data files from test/output/fft-tn-quadp/qft/ and qft_compress/ and plot:
 
   Figure 1 (error vs chi):
     1. rms |MPO - F|
@@ -14,7 +14,7 @@ Load error data files from test/output/ and test/output_compress/ and plot:
 All r values and all types are overlaid on the same figures.
 
 Usage:
-    python plot_errors_qft_mpo.py [--dir test/output] [--save plot.png]
+    python test/fft-tn-quadp/plot_errors_qft_mpo.py [--dir test/output/fft-tn-quadp/qft]
 """
 
 import argparse
@@ -67,7 +67,7 @@ def load_file(fname):
 
 def plot_all(data_dir, compress_dir):
     """Find all error files and plot them."""
-    figure_dir = "test/figure"
+    figure_dir = "test/output/fft-tn-quadp/figure"
     os.makedirs(figure_dir, exist_ok=True)
 
     # Original files
@@ -222,9 +222,9 @@ def plot_all(data_dir, compress_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot QFT MPO error data")
-    parser.add_argument("--dir", default="test/output",
+    parser.add_argument("--dir", default="test/output/fft-tn-quadp/qft",
                         help="Directory containing error data files")
-    parser.add_argument("--compress-dir", default="test/output_compress",
+    parser.add_argument("--compress-dir", default="test/output/fft-tn-quadp/qft_compress",
                         help="Directory containing compressed error data files")
     args = parser.parse_args()
 

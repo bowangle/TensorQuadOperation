@@ -9,12 +9,16 @@
 #include <random>
 #include <string>
 
-#include "mpo_base.h"
+#include "TensorQuadOperation/mpo_base.hpp"
+#include <type_int128.h>
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include <boost/math/constants/constants.hpp>
 
-namespace magic_tensor_qft {
+namespace fft_tn_quadp::magic_tensor_qft {
+
+using TensorQuadOperation::MPO;
+using xfac_quad::Tensor3D;
 
 // ============================================================
 // Math helpers — ADL-dispatched so they work for double,
@@ -436,4 +440,4 @@ MPO<ComplexT> load_compressed_qft_mpo(
                          /*w_=*/-1);
 }
 
-} // namespace magic_tensor_qft
+} // namespace fft_tn_quadp::magic_tensor_qft

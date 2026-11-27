@@ -17,16 +17,27 @@
 #include <sstream>
 #include <fstream>
 
-#include <xf-qd-runner.hpp>
-#include <grid.h>
+#include <xfac_quad_runner/xf-qd-output.hpp>
+#include <xfac_quad_runner/xf-qd-runner.hpp>
+#include <QTgrid-quad/grid.h>
+#include "TensorQuadOperation/mps_base.hpp"
 #include <random>
 #include <filesystem>
 
 #include <unsupported/Eigen/FFT>
 
-#include "magic_tensor_qft.hpp"
+#include "fft-tn-quadp/magic_tensor_qft.hpp"
 
-namespace fft_tn_test {
+namespace fft_tn_quadp::fft_tn_test {
+
+using TensorQuadOperation::MPS;
+using qtgrid::QTGrid;
+using xfac_quad_runner::CacheLevel;
+using xfac_quad_runner::TCI2_1D_Runner;
+using xfac_quad_runner::TCI2_1D_runner_opts;
+using xfac_quad_runner::TCI2_1D_runner_param;
+using xfac_quad_runner::TTErrorOnGrid;
+using xfac_quad_runner::load_fvalues_from_json;
 
 struct MPOMPSMethodTiming {
     double total_seconds = 0;
@@ -819,8 +830,6 @@ void verify_loaded_data(
 }
 
 
-} // namespace fft_tn_test
-
 // Catch2 reports each failed assertion where it occurs, but its final summary
 // only contains aggregate counts. Record the active section path for each
 // failure and print a compact recap at the end of the run.
@@ -914,3 +923,5 @@ private:
 };
 
 CATCH_REGISTER_LISTENER(FFTFailureSummaryListener)
+
+} // namespace fft_tn_quadp::fft_tn_test

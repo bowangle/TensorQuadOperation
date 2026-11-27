@@ -72,14 +72,17 @@ See the [tensor operations guide](include/TensorQuadOperation/README.md) for MPO
 Run from the repository root:
 
 ```sh
-bash run_test.sh
+bash run_test.sh                     # All three project test groups
+bash run_test_TensorQuadOperation.sh
+bash run_test_QuanticsIntegration.sh  # Includes simplex integration
+bash run_test_fft-tn-quadp.sh
 # Or use CTest:
 ctest --test-dir build --output-on-failure
 # Run the simplex suite on its own:
 ./build/tq_test_test_simplex_integration
 ```
 
-The runner executes tests in parallel and keeps their console logs beside the sources in `test/TensorQuadOperation/` and `test/QuanticsIntegration/`. Generated tensors, grids, and plots go under the ignored `test/output/` directory. See the [simplex plotting README](test/simplex_plot/README.md) for output locations and how to replot CSVs.
+The runners keep console logs beside the sources in `test/TensorQuadOperation/`, `test/QuanticsIntegration/`, and `test/fft-tn-quadp/`. FFT tests run serially in the shell runner because they may populate a shared QFT cache; the other groups run their tests in parallel. Generated tensors, grids, and plots go under the ignored `test/output/` directory. See the [simplex plotting README](test/simplex_plot/README.md) for output locations and how to replot CSVs.
 
 ## Project structure
 
@@ -91,6 +94,7 @@ TensorQuadOperation/
 ├── test/
 │   ├── TensorQuadOperation/    # Tensor-operation tests and runner logs
 │   ├── QuanticsIntegration/   # Fitting and integration tests and runner logs
+│   ├── fft-tn-quadp/          # FFT/QFT tests and runner logs
 │   ├── simplex_plot/          # Plotting script and instructions
 │   └── output/               # Generated fixtures, diagnostic logs, and plots (ignored)
 ├── latex_note/                # Convolution and simplex derivations

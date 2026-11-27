@@ -14,10 +14,22 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch.hpp>
 
-#include "fft_tn.hpp"
-#include "general_integrator.hpp"
-#include "test_common.hpp"
+#include "fft-tn-quadp/fft_tn.hpp"
+#include "fft-tn-quadp/general_integrator.hpp"
+#include "fft-tn-quadp/test_common.hpp"
 #include "type_int128.h"
+
+using fft_tn_quadp::FFTmps;
+using TensorQuadOperation::MPS;
+using qtgrid::QTGrid;
+using xfac_quad::Tensor3D;
+using xfac_quad_runner::CacheLevel;
+using xfac_quad_runner::TCI2_1D_Runner;
+using xfac_quad_runner::TCI2_1D_runner_opts;
+using xfac_quad_runner::TCI2_1D_runner_param;
+namespace fft_tn_test = fft_tn_quadp::fft_tn_test;
+namespace general_integrator = fft_tn_quadp::general_integrator;
+namespace magic_tensor_qft = fft_tn_quadp::magic_tensor_qft;
 
 namespace {
 
@@ -44,7 +56,7 @@ constexpr Real d1 = 2;
 // 7 is dyadically aligned on [-18, 22] at every tested resolution.
 constexpr Real d2 = 7;
 
-const std::string output_root = "test/output_fft_conv";
+const std::string output_root = "test/output/fft-tn-quadp/fft_conv";
 const std::string output_path = output_root + "/double";
 const std::string input_path = output_root + "/input";
 const std::string qft_path = "mpo_data/data/";

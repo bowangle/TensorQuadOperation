@@ -16,7 +16,7 @@ We start from a hypercube integral, restrict it to an ordered simplex
 using permutation symmetry, and reduce the simplex integral to successive
 one-dimensional convolutions. Physical prefactors, such as powers of the
 interaction or factors of $i$, are omitted; the combinatorial factor
-$1/n!$ is kept explicitly until the change of domain.
+$1/{n!}$ is kept explicitly until the change of domain.
 
 \section{Original integration on the hypercube}
 
@@ -27,7 +27,7 @@ normalized integral
     \int_{\mathcal H_t}du_1\cdots du_n\,
     \left[\prod_{k=1}^n\lambda(u_k)\right]
     \widetilde Q_n(u_1,\ldots,u_n),
-    \qquad \mathcal H_t=[0,t]^n.}
+    \qquad \mathcal H_t={[0,t]}^n.}
     \label{eq:hypercube_integral}
 \end{equation}
 All variables are integrated independently over the same interval.
@@ -52,7 +52,7 @@ Permutation symmetry does not imply smoothness or a low-rank tensor
 representation. Time-ordered propagators contain Heaviside factors such
 as $\theta(u_i-u_j)$, and the resulting integrand can have cusps when two
 interaction times coincide. The hyperplanes $u_i=u_j$ separate the
-hypercube into $n!$ ordering sectors. A direct tensor approximation in
+hypercube into ${n!}$ ordering sectors. A direct tensor approximation in
 the $u_k$ coordinates must resolve these internal ordering boundaries,
 which can require large ranks even when the function is simpler within
 each sector.
@@ -76,12 +76,12 @@ Define the ordered simplex
         0\leq u_n\leq\cdots\leq u_1\leq t\}.
     \label{eq:ordered_simplex}
 \end{equation}
-The hypercube splits into $n!$ ordering sectors, one for each permutation
+The hypercube splits into ${n!}$ ordering sectors, one for each permutation
 of the variables. Their interiors are disjoint, and their common
 boundaries $u_i=u_j$ have zero measure for an ordinary integrable function.
 By symmetry, each sector has the same integral. The hypercube integral
-is therefore $n!$ times the integral over $\mathcal S_u(t)$, cancelling
-the original factor $1/n!$:
+is therefore ${n!}$ times the integral over $\mathcal S_u(t)$, cancelling
+the original factor $1/{n!}$:
 \begin{equation}
     \boxed{\begin{aligned}
     Q_n(t)&=\int_{\mathcal S_u(t)}du_1\cdots du_n\,
@@ -94,9 +94,9 @@ the original factor $1/n!$:
     \end{aligned}}
     \label{eq:ordered_integral}
 \end{equation}
-No additional division by $n!$ is needed after this step.
-If the starting hypercube integral has no $1/n!$ prefactor, its simplex
-expression instead retains an overall factor $n!$. Without permutation
+No additional division by ${n!}$ is needed after this step.
+If the starting hypercube integral has no $1/{n!}$ prefactor, its simplex
+expression instead retains an overall factor ${n!}$. Without permutation
 symmetry, the different ordering sectors must be summed explicitly.
 For a common interval $[a,b]$, the same construction applies after
 shifting $u_k=a+s_k$, setting $t=b-a$, and replacing $\lambda(s)$
@@ -137,7 +137,7 @@ In the ascending delay convention $w_k=t-u_k$, one instead has
 $0\leq w_1\leq\cdots\leq w_n\leq t$, with
 $v_1=w_1$ and $v_k=w_k-w_{k-1}$.
 Thus, a function of the individual delays is evaluated in gap coordinates
-at $(w_1,\ldots,w_n)=(v_1,v_1+v_2,\ldots,\sum_jv_j)$.
+at $(w_1,\ldots,w_n)=(v_1,v_1+v_2,\ldots,\sum_j v_j)$.
 
 \section{Tensor-train reduction to one-dimensional integrals}
 
@@ -173,7 +173,7 @@ For $k<n$, the recursion is
 The vector $\Psi_k(x)$ has $r_{k-1}$ components; the last result
 $\Psi_1(t)$ is a scalar. In particular,
 \begin{equation}
-    \Psi_n(x)=\int_0^xdy\,\lambda(y)T_n(x-y).
+    \Psi_n(x)=\int_0^x\!\mathrm{d}y\,\lambda(y)T_n(x-y).
 \end{equation}
 To derive the recursion, observe that $u_n$ occurs only in
 $\lambda(u_n)T_n(u_{n-1}-u_n)$. Integrating this factor over
@@ -187,9 +187,9 @@ Its integral over $0\leq u_k\leq u_{k-1}$ is precisely
 $\Psi_k(u_{k-1})$. Repeating this step reaches $u_0=t$ and leaves
 $\Psi_1(t)$, proving the reduction while preserving the matrix order.
 
-With the causal matrix--vector convolution
+With the causal matrix-vector convolution
 \begin{equation}
-    (A*B)(x)=\int_0^xdy\,A(x-y)B(y),
+    (A*B)(x)=\int_0^x\!\mathrm{d}y\,A(x-y)B(y),
 \end{equation}
 each step is simply $\Psi_k=A_k*(\lambda\Psi_{k+1})$,
 with $\Psi_{n+1}(x)=1$ for the base case.
@@ -197,7 +197,7 @@ The activation multiplies the current vector \emph{pointwise before each
 convolution}; it is not applied only once at the end.
 For example, at order two,
 \begin{equation}
-    \widehat Q_2(t)=\int_0^tdu_1\int_0^{u_1}du_2\,
+    \widehat Q_2(t)=\int_0^t\!\mathrm{d}u_1\int_0^{u_1}\!\mathrm{d}u_2\,
        \lambda(u_1)\lambda(u_2)
        T_1(t-u_1)P_1^{-1}T_2(u_1-u_2).
 \end{equation}
@@ -206,7 +206,7 @@ For example, at order two,
 For $n\geq2$, the last remaining integration is
 \begin{equation}
     \boxed{\widehat Q_n(t)=
-    \int_0^tdu_1\,\lambda(u_1)T_1(t-u_1)P_1^{-1}\Psi_2(u_1)
+    \int_0^t\!\mathrm{d}u_1\,\lambda(u_1)T_1(t-u_1)P_1^{-1}\Psi_2(u_1)
     =\Psi_1(t).}
     \label{eq:correct_final}
 \end{equation}
@@ -249,8 +249,8 @@ ordered here from the least to the most significant bit. In particular,
 represent the arrays
 \begin{equation}
     \Lambda[m]=\lambda(mh),\qquad
-    \mathsf T^{(k)}_{ab}[q]=\bigl(T_k(qh)\bigr)_{ab},
-    \qquad \Psi_{k,a}[m]\simeq\bigl(\Psi_k(mh)\bigr)_a
+    \mathsf T^{(k)}_{ab}[q]={\bigl(T_k(qh)\bigr)}_{ab},
+    \qquad \Psi_{k,a}[m]\simeq{\bigl(\Psi_k(mh)\bigr)}_a
 \end{equation}
 as scalar MPSs, one for each component. The indices $a,b$ are the
 \emph{variable-level} train indices of Section~3; they are not binary
@@ -275,7 +275,7 @@ $q=m-y/h=1,\ldots,m$. Thus define kernels with their zero-lag entry removed:
 \end{equation}
 In MPS form this can be done by subtracting
 $\mathsf T^{(k)}_{ab}[0]\,\delta_{q,0}$; the delta at the all-zero bit
-string is a bond-dimension-one MPS. This removes a quadrature endpoint,
+string is a bond-dimension-one MPS\@. This removes a quadrature endpoint,
 not the value of the original continuous kernel.
 
 Starting at $k=n$ and proceeding downwards, the discrete recursion is
@@ -284,7 +284,7 @@ Starting at $k=n$ and proceeding downwards, the discrete recursion is
     \Psi_{n,a}
         &\simeq h\,\operatorname{conv}(\mathsf K^{(n)}_{a1},\Lambda),\\
     D_{k,b}
-        &=\Lambda\odot\sum_{c=1}^{r_k}(P_k^{-1})_{bc}\Psi_{k+1,c},
+        &=\Lambda\odot\sum_{c=1}^{r_k}{(P_k^{-1})}_{bc}\Psi_{k+1,c},
         &&k<n,\\
     \Psi_{k,a}
         &\simeq h\sum_{b=1}^{r_k}
@@ -296,14 +296,14 @@ Starting at $k=n$ and proceeding downwards, the discrete recursion is
 Here $\odot$ denotes the pointwise product of two MPSs representing
 functions on the same grid. Mixing by $P_k^{-1}$ uses scalar multiples
 and sums of component MPSs. Each convolution is a scalar MPS convolution;
-the component sums restore the matrix--vector contraction.
+the component sums restore the matrix-vector contraction.
 Truncation may be applied after these operations to control the quantics
 bond dimensions. No complex conjugation is involved.
 
 Each recursion level contributes one factor $h$, so the final result
 contains $h^n$ already. Evaluate the scalar MPS $\Psi_{1,1}$ at the bits
 of $m$ to obtain the approximation to $Q_n(mh)$; do not multiply by a
-second volume factor or divide by $n!$ again. The point $T_M$ itself is
+second volume factor or divide by ${n!}$ again. The point $T_M$ itself is
 not stored, so evaluating there requires an endpoint convention rather
 than silently interpreting $m=N-1$ as $m=N$.
 
@@ -332,7 +332,7 @@ The discrete simplex integral is therefore
         \delta_{s_{k-1},\,j_k+s_k},\qquad s_0=m.}
     \label{eq:quantics_ttn_simplex}
 \end{equation}
-The deltas enforce $\sum_kj_k\leq m$ and all intermediate ordered times.
+The deltas enforce $\sum_k j_k\leq m$ and all intermediate ordered times.
 For $\Lambda=1$, they impose only the simplex geometry; otherwise they
 also supply the correct activation factors at the partial remaining times.
 The sums in this formula specify a tensor-network contraction, not dense
@@ -362,19 +362,20 @@ transformation of Section~2 must also be accounted for; relabelling the
 branches alone is not a change of variables.
 
 \begin{thebibliography}{9}
+\raggedright%
 \bibitem{ttd}
 Y.~N\'u\~nez-Fern\'andez et al.,
 \emph{Learning Feynman Diagrams with Tensor Trains},
 \href{https://arxiv.org/abs/2207.06135v2}{arXiv:2207.06135v2} (2022),
-Sec.~V.A and Appendix G, Eqs.~(G1)--(G7);
-see also Eqs.~(53)--(55).
+Sec.~V.A and Appendix G, Eqs.~(G1) to (G7);
+see also Eqs.~(53) to (55).
 
 \bibitem{jeannin}
 M.~Jeannin,
 \emph{Exact numerical calculation of Feynman diagrams for
 out-of-equilibrium Kondo physics using Tensor Cross-Interpolation},
 PhD thesis, Universit\'e Grenoble Alpes (2024),
-Sec.~5.1.2, pp.~78--80, Eqs.~(5.10)--(5.17).
+Sec.~5.1.2, pp.~78--80, Eqs.~(5.10) to (5.17).
 \end{thebibliography}
 
 \end{document}
