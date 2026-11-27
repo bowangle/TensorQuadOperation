@@ -135,8 +135,8 @@ template<typename Scalar, typename Real, typename Sint>
 void validation_simplex_parameter(
     const TensorQuadOperation::TTN<Scalar>& values,
     const qtgrid::MultQTGrid<Real, Sint>& grid,
-    const std::vector<TensorQuadOperation::MPS<Scalar>>& kernels,
-    const qtgrid::MultQTGrid<Real, Sint>& kernel_grid)
+    const TensorQuadOperation::MPS<Scalar>* kernel,
+    const qtgrid::QTGrid<Real, Sint>& kernel_grid)
 {
     if (grid.get_dim() <= 0 || grid.get_nBits().empty())
         throw std::invalid_argument(
@@ -152,16 +152,13 @@ void validation_simplex_parameter(
     }
     validate_simplex_tree(values.get_TTN_body(), grid.get_dim(), bits);
 
-    if (kernels.empty()) return;
-    if (kernels.size() != static_cast<std::size_t>(grid.get_dim()))
+    if (!kernel) return;
+    if (kernel_grid.get_a() != Real(0) || kernel_grid.get_b() != upper ||
+        kernel_grid.get_nBits() != bits ||
+        kernel_grid.get_x_ref() - Real(kernel_grid.get_k_offset()) * spacing != Real(0))
         throw std::invalid_argument(
-            "QuanticsIntegrator_kD::make_integration_simplex: expected one kernel per variable");
-    if (kernel_grid.get_a() != grid.get_a() || kernel_grid.get_b() != grid.get_b() ||
-        kernel_grid.get_nBits() != grid.get_nBits())
-        throw std::invalid_argument(
-            "QuanticsIntegrator_kD::make_integration_simplex: kernel grids must match the integration grid");
-    for (const auto& kernel : kernels)
-        validate_simplex_mps(kernel, bits, "QuanticsIntegrator_kD::make_integration_simplex kernel");
+            "QuanticsIntegrator_kD::make_integration_simplex: kernel grid must match the common time grid");
+    validate_simplex_mps(*kernel, bits, "QuanticsIntegrator_kD::make_integration_simplex kernel");
 }
 
 } // namespace validation
@@ -231,6 +228,68 @@ void _init_integrate_branch(
     }
 }
 
+/// Weight the branch MPO on its input time x = u_k, leaving its output y = u_{k-1} open.
+/// Composing B(y, x) with D(x, x') = delta(x, x') * kernel(x') gives
+/// B'(y, x') = B(y, x') * kernel(x'). The later merge sums over x'.
+/// Use the kernel MPS directly instead of forming D. Internal bond dimensions
+/// multiply, but the kernel's unit boundary bonds preserve the branch attachment basis.
+/// This step does not apply quadrature scaling or truncate the resulting bonds.
+template<typename Scalar>
+TensorQuadOperation::MPO<Scalar> add_kernel_k_step(
+    const TensorQuadOperation::MPO<Scalar>& branch,
+    const TensorQuadOperation::MPS<Scalar>& kernel)
+{
+    const auto& branch_cores = branch.get_core();
+    const auto& kernel_cores = kernel.get_core();
+    const int bits = static_cast<int>(branch_cores.size());
+    validation::validate_simplex_mps(kernel, bits, "add_kernel_k_step kernel");
+    validation::validate_branch_mpo(branch, bits, "add_kernel_k_step");
+    const int ordering = branch.get_ordering();
+    const int kernel_ordering = kernel.get_ordering();
+    using TensorQuadOperation::utc::zip_up::detail::zip_up_core_dimensions;
+    using TensorQuadOperation::utc::zip_up::detail::zip_up_physical_slice;
+
+    std::vector<xfac_quad::Tensor3D<Scalar>> cores;
+    cores.reserve(branch_cores.size());
+    for (std::size_t site = 0; site < branch_cores.size(); ++site) {
+        const auto& branch_core = branch_cores[site];
+        const auto& kernel_core = kernel_cores[site];
+        const auto branch_shape = zip_up_core_dimensions(branch_core, ordering);
+        const auto kernel_shape = zip_up_core_dimensions(kernel_core, kernel_ordering);
+        const auto left_size = branch_shape[0] * kernel_shape[0];
+        const auto right_size = branch_shape[2] * kernel_shape[2];
+        const std::array<Eigen::Index, 3> shape = ordering == 0
+            ? std::array<Eigen::Index, 3>{4, left_size, right_size}
+            : ordering == 1 ? std::array<Eigen::Index, 3>{left_size, 4, right_size}
+                            : std::array<Eigen::Index, 3>{left_size, right_size, 4};
+        xfac_quad::Tensor3D<Scalar> core(shape[0], shape[1], shape[2]);
+
+        // In slot 2 * upper_bit + input_bit, the diagonal selects input_bit.
+        for (Eigen::Index slot = 0; slot < 4; ++slot) {
+            const auto branch_slice = zip_up_physical_slice(branch_core, ordering, slot);
+            const auto kernel_slice = zip_up_physical_slice(kernel_core, kernel_ordering, slot % 2);
+            // Form kernel_slice ⊗ branch_slice with branch indices varying fastest.
+            const auto weight_slice = [&](auto weighted_slice) {
+                for (Eigen::Index right = 0; right < kernel_slice.cols(); ++right)
+                    for (Eigen::Index left = 0; left < kernel_slice.rows(); ++left)
+                        weighted_slice.block(left * branch_slice.rows(), right * branch_slice.cols(),
+                                             branch_slice.rows(), branch_slice.cols()) =
+                            kernel_slice(left, right) * branch_slice;
+            };
+            if (ordering == 0)
+                weight_slice(core.row_as_mat(slot));
+            else if (ordering == 1)
+                weight_slice(core.col_as_mat(slot));
+            else
+                weight_slice(core.slice(slot));
+        }
+        cores.push_back(std::move(core));
+    }
+    return TensorQuadOperation::MPO<Scalar>(std::move(cores), branch.get_max_bond_dim(),
+                                           branch.get_reltol(), /*w=*/-1,
+                                           branch.get_left_phys(), branch.get_right_phys(), ordering);
+}
+
 // from (v_1, ..., v_{k-1}, v_k, u_k) to (v_1, ..., v_{k-1}, u_{k-1})
 // work on both branch v_k and u_k which are the branch k-1 and k of the tree.
 // Update the tree in place; the final step leaves a single branch on t.
@@ -266,12 +325,22 @@ void _integrate_k_branch(
         logger->info("Tree before subtractor: max_chi = {}", tree.get_chi());
     auto branch_mpo = substract_branch(tree, branch_k - 1, method); // v_k -> uk-1, uk
     if (log_step)
-        logger->info("Branch MPO: max_chi = {}", branch_mpo.get_chi());
+        logger->info("Branch MPO{}: max_chi = {}", kernel ? " before kernel" : "", branch_mpo.get_chi());
     // ============================================================
     //              kernel if provided
     // ============================================================
 
-    // TODO if kernel is provide for now we skip it. (it will only modify branch_mpo but not it's leg dimension)
+    // We have the following:
+    // branch_mpo: (Ra,b,c) B1_b,b1,x1,y1 B2_b1,b2,x2,y2 B3_b2,1,x3,y3
+    // kernel(has a diag MPO):      D1_1,d1,x1,x'1 D2_d1,d2,x2,x'2 D3_d2,1,x3,x'3
+    // We want to sum on x to get:
+    // (Ra,b,c) B'1_b,b1,x'1,y1 B'2_b1,b2,x'2,y2 B'3_b2,1,x'3,y3
+    // x=u_k; y=u_{k-1}; Dk(x,x')= delta_(x, x')Ker_k(x)
+    if (kernel) {
+        branch_mpo = add_kernel_k_step(branch_mpo, *kernel);
+        if (log_step)
+            logger->info("Branch MPO after kernel: max_chi = {}", branch_mpo.get_chi());
+    }
 
     // ============================================================
     //              merge on uk
@@ -467,63 +536,6 @@ void _integrate_k_branch(
     tree = TensorQuadOperation::TTN<Scalar>(std::move(reduced),
         tree.get_max_bond_dim(), tree.get_reltol(), /*w=*/-1);
     log_done();
-}
-
-/// Compose the branch MPO with the diagonal kernel on the input time u_{k-1}.
-/// The kernel has unit boundary bonds, so the branch attachment keeps its basis.
-template<typename Scalar>
-TensorQuadOperation::MPO<Scalar> add_kernel_k_step(
-    const TensorQuadOperation::MPO<Scalar>& branch,
-    const TensorQuadOperation::MPS<Scalar>& kernel)
-{
-    const auto& branch_cores = branch.get_core();
-    const auto& kernel_cores = kernel.get_core();
-    const int bits = static_cast<int>(branch_cores.size());
-    validation::validate_simplex_mps(kernel, bits, "add_kernel_k_step kernel");
-    validation::validate_branch_mpo(branch, bits, "add_kernel_k_step");
-    const int ordering = branch.get_ordering();
-    const int kernel_ordering = kernel.get_ordering();
-    using TensorQuadOperation::utc::zip_up::detail::zip_up_core_dimensions;
-    using TensorQuadOperation::utc::zip_up::detail::zip_up_physical_slice;
-
-    std::vector<xfac_quad::Tensor3D<Scalar>> cores;
-    cores.reserve(branch_cores.size());
-    for (std::size_t site = 0; site < branch_cores.size(); ++site) {
-        const auto& branch_core = branch_cores[site];
-        const auto& kernel_core = kernel_cores[site];
-        const auto branch_shape = zip_up_core_dimensions(branch_core, ordering);
-        const auto kernel_shape = zip_up_core_dimensions(kernel_core, kernel_ordering);
-        const auto left_size = branch_shape[0] * kernel_shape[0];
-        const auto right_size = branch_shape[2] * kernel_shape[2];
-        const std::array<Eigen::Index, 3> shape = ordering == 0
-            ? std::array<Eigen::Index, 3>{4, left_size, right_size}
-            : ordering == 1 ? std::array<Eigen::Index, 3>{left_size, 4, right_size}
-                            : std::array<Eigen::Index, 3>{left_size, right_size, 4};
-        xfac_quad::Tensor3D<Scalar> core(shape[0], shape[1], shape[2]);
-
-        // In slot 2 * upper_bit + input_bit, the diagonal selects input_bit.
-        for (Eigen::Index slot = 0; slot < 4; ++slot) {
-            const auto branch_slice = zip_up_physical_slice(branch_core, ordering, slot);
-            const auto kernel_slice = zip_up_physical_slice(kernel_core, kernel_ordering, slot % 2);
-            const auto weight_slice = [&](auto weighted_slice) {
-                for (Eigen::Index right = 0; right < kernel_slice.cols(); ++right)
-                    for (Eigen::Index left = 0; left < kernel_slice.rows(); ++left)
-                        weighted_slice.block(left * branch_slice.rows(), right * branch_slice.cols(),
-                                             branch_slice.rows(), branch_slice.cols()) =
-                            kernel_slice(left, right) * branch_slice;
-            };
-            if (ordering == 0)
-                weight_slice(core.row_as_mat(slot));
-            else if (ordering == 1)
-                weight_slice(core.col_as_mat(slot));
-            else
-                weight_slice(core.slice(slot));
-        }
-        cores.push_back(std::move(core));
-    }
-    return TensorQuadOperation::MPO<Scalar>(std::move(cores), branch.get_max_bond_dim(),
-                                           branch.get_reltol(), /*w=*/-1,
-                                           branch.get_left_phys(), branch.get_right_phys(), ordering);
 }
 
 template<typename Scalar>

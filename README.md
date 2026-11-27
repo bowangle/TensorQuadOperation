@@ -1,286 +1,105 @@
 # TensorQuadOperation
 
-A high-performance C++20 library for **Matrix Product States (MPS)** and **Matrix Product Operators (MPO)** — also known as Tensor Trains (TT) — with support for **quadruple‑precision arithmetic** (float128, double‑double) and generic scalar types via Eigen.
+A C++20 library for tensor trains, tree tensor networks, and quantics integration. It supports standard and extended precision through Eigen and `xfac_quad`, including `double`, Boost `float128`, and QD double-double (`dd_128`), with real and complex scalars where supported by the operation.
 
-The library provides construction, canonicalisation, compression, arithmetic, and contraction of MPS/MPO tensors, as well as TCI (Tensor Cross Interpolation) for constructing tensor trains from black‑box functions.
+## Documentation
 
----
+| Namespace | What it provides |
+|---|---|
+| [**TensorQuadOperation**](include/TensorQuadOperation/README.md) | `TT`, `MPS`, `MPO`, and `TTN`; tensor construction, arithmetic, canonicalization, compression, contraction, and discrete convolution. |
+| [**QuanticsIntegration**](include/QuanticsIntegration/README.md) | Grid-aware TCI fitting, definite and indefinite integration, rectangular queries, and weighted or unweighted simplex integration. |
+
+The integration layer uses the tensor layer, not the other way around.
 
 ## Installation
 
 ### Prerequisites
 
-- **C++20** compiler (GCC ≥ 12 or Clang ≥ 16)
-- **CMake** ≥ 3.21
-- **Eigen** (fetched automatically as part of the extern chain)
-- **Boost** (for `boost::multiprecision::float128`)
-- **OpenMP**
-- **spdlog**, **QD** (double‑double) — all handled by the external submodules
+- A C++20 compiler (GCC 12+ or Clang 16+) with OpenMP support
+- CMake 3.21+, Git, Bash, and Boost headers
+- `gnuplot` for automatic plots when running the full simplex test suite
 
-### Step 1 – Clone
+The external submodules provide `xfac_quad`, Eigen, QD, spdlog, JSON, and Catch2.
 
-```bash
+### Clone, install dependencies, and build
+
+```sh
 git clone https://github.com/bowangle/TensorQuadOperation.git
 cd TensorQuadOperation
-```
-
-### Step 2 – Install externals
-
-```bash
 bash install_extern.sh
-```
-
-This initialises all submodules and sets up the merged `xfac_quad` dependency (QTGrid, numerical core, and runners), including Eigen, QD, spdlog, JSON, and numeric‑type‑quad.
-
-### Step 3 – Compile
-
-```bash
 bash compile.sh
 ```
 
-Runs CMake (Release, `-march=native`) and builds every test target into `build/`.
+`install_extern.sh` initializes the submodules and sets up the external dependencies. `compile.sh` configures a Release build with `-march=native` and builds the test executables in `build/`. To build without this project's test targets, configure CMake with `-DTQ_BUILD_TESTS=OFF`.
 
-### Step 4 – Run the tests (optional)
+## How to use it
 
-```bash
-bash run_test.sh
+Add the repository as a CMake subdirectory and link your executable against the interface target. It exposes both public header trees and their dependencies.
+
+```cmake
+add_subdirectory(TensorQuadOperation)
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE tensorquad_deps)
 ```
 
-The test executables run in parallel; their logs are saved beside the grouped sources in `test/TensorQuadOperation/` and `test/QuanticsIntegration/`. The script returns a failure status if any test fails.
-
----
-
-## Library overview
-
-Public headers are split into two folders with matching C++ namespaces:
-
-- `TensorQuadOperation`: tensor types, arithmetic, construction, and contraction helpers. The nested helper namespaces are `TensorQuadOperation::utc` and `TensorQuadOperation::analytic_mps_construction`.
-- `QuanticsIntegration`: grid-aware fitting and integration algorithms, depending on `TensorQuadOperation`, not the reverse.
-
-The CMake target `tensorquad_deps` exposes the `include/` root and dependencies for both layers. Use the prefixed include paths and qualified names; the old flat headers and global project names are no longer provided. Serialized tensor and grid formats are unchanged.
+Use the namespace-prefixed headers. This example constructs a constant MPS, evaluates a sample, and integrates it on a 1D grid:
 
 ```cpp
-#include "TensorQuadOperation/mps_base.hpp"
-#include "TensorQuadOperation/ttn_base.hpp"
+#include <complex>
+#include <iostream>
+#include "TensorQuadOperation/generic_construction.hpp"
 #include "QuanticsIntegration/quantics_integrator.hpp"
-#include "QuanticsIntegration/quantics_integrator_kD.hpp"
 
-using State = TensorQuadOperation::MPS<double>;
-using TreeState = TensorQuadOperation::TTN<double>;
-using Integrator1D = QuanticsIntegration::QuanticsIntegrator1D<double>;
-using IntegratorKD = QuanticsIntegration::QuanticsIntegrator_kD<double>;
+int main() {
+    using Scalar = std::complex<double>;
+    using Integrator = QuanticsIntegration::QuanticsIntegrator1D<Scalar>;
+    constexpr int bits = 8;
+
+    const Integrator::Grid grid(0.0, 1.0, bits);
+    const auto values =
+        TensorQuadOperation::analytic_mps_construction::make_one_mps<Scalar>(bits);
+    std::cout << values.eval(grid.coord_to_id(0.5)) << '\n';
+
+    const Integrator integrator(grid, values);
+    std::cout << integrator.integrate() << '\n';  // Integral of 1 on [0, 1).
+}
 ```
 
-| Header | Purpose |
-|---|---|
-| `xfac_quad/cubemat_helper.h` (dependency) | Shared `xfac_quad::Tensor3D<T>` — column-major 3-index tensors with views, copies, and serialization |
-| `TensorQuadOperation/tt_base.hpp` | `TT<T>` — generic Tensor Train: canonicalisation, addition, scalar ops, conjugation, evaluation, save/load |
-| `TensorQuadOperation/mps_base.hpp` | `MPS<T>` — Matrix Product State: `dot`, `norm2`, convolution, translation, promotion from `TT` |
-| `TensorQuadOperation/mpo_base.hpp` | `MPO<T>` — Matrix Product Operator: `from_mps`, `diag`, `transpose`, `_mul` (apply to MPS) |
-| `TensorQuadOperation/ttn_base.hpp` | `TTN<T>` — tree tensor networks, canonicalisation, compression, branch operations, and separable-kernel convolution |
-| `TensorQuadOperation/utc.hpp` | Contraction kernels in `utc::zip_up`, `utc::qrsvd`, and `utc::optimized` |
-| `xfac_quad/matrix/mat_decomp.h` (dependency) | Shared QR and SVD decompositions with truncation |
-| `TensorQuadOperation/magic_tensor.hpp` | Binary addition tensors and convolution operators |
-| `TensorQuadOperation/generic_construction.hpp` | Analytic MPS construction in `analytic_mps_construction` |
-| `QuanticsIntegration/quantics_integrator.hpp` | `QuanticsIntegrator1D<Scalar, Sint>` and its `QUANTICS_INT_1D` alias — 1D fitting and integration |
-| `QuanticsIntegration/quantics_integrator_kD.hpp` | `QuanticsIntegrator_kD<Scalar, Sint>` — multidimensional tree fitting and integration |
-| `QuanticsIntegration/indefinite_integral.hpp` | Heaviside MPOs and grid-aware indefinite-integration helpers |
+See the [tensor operations guide](include/TensorQuadOperation/README.md) for MPO application and contraction methods, and the [integration guide](include/QuanticsIntegration/README.md) for TCI fitting, rectangular queries, and weighted simplex integration.
 
----
+## Tests
 
-## Using MPS
+Run from the repository root:
 
-### Construction
-
-```cpp
-#include "TensorQuadOperation/mps_base.hpp"
-
-using TensorQuadOperation::MPS;
-
-// Build from a vector of shared Tensor3D cores
-std::vector<xfac_quad::Tensor3D<std::complex<double>>> cores = { /* ... */ };
-MPS<std::complex<double>> psi(cores);
-
-// Load from a TCI‑generated file (Armadillo cube text format)
-MPS<std::complex<double>> psi("path/to/file.tt");
-
-// Load with truncation parameters
-MPS<std::complex<float128>> psi("file.tt",
-    /*max_bond_dim=*/32,
-    /*reltol=*/1e-12,
-    /*w=*/0);          // canonical centre at site 0
-```
-
-### Core operations
-
-```cpp
-// --- Evaluation ---
-std::vector<int> idx = {0, 1, 0, 1, ...};
-auto value = psi.eval(idx);                    // single point
-auto pts   = psi.generate_points(1000);        // random points
-auto vals  = psi.eval_list(pts);               // batch evaluation
-
-// --- Arithmetic ---
-auto sum  = psi1 + psi2;                       // TT addition (block‑diagonal direct sum)
-auto diff = psi1 - psi2;                       // subtraction
-auto neg  = -psi;                              // unary minus
-auto scaled = psi * std::complex<double>(3.0); // scalar multiplication
-psi += psi2;                                   // in‑place addition
-psi *= 2.0;                                    // in‑place scalar multiply
-
-// --- Conjugation ---
-auto psi_conj = psi.conj();                    // element‑wise complex conjugate
-
-// --- Canonicalisation ---
-psi._initialize_w(center);                     // bring to canonical form with centre at `center`
-psi.shift_w(5);                                // move canonical centre to site 5
-psi.check_canonical();                         // verify orthogonality constraints
-
-// --- Compression ---
-psi.compress_svd(1e-12, 32);                   // SVD truncation: reltol + max bond dim
-
-// --- Dot product & norm ---
-auto overlap  = psi1.dot(psi2);                // <psi1 | psi2>
-auto norm_sq  = psi1.norm2();                  // <psi | psi> (real, ≥ 0)
-```
-
-### Save / Load
-
-```cpp
-psi.save("my_state");     // writes my_state.tt (Armadillo cube text format)
-MPS<T> reloaded("my_state.tt");
-```
-
----
-
-## Using MPO
-
-### Construction from an MPS (diagonal operator)
-
-```cpp
-#include "TensorQuadOperation/mpo_base.hpp"
-
-using TensorQuadOperation::MPS;
-using TensorQuadOperation::MPO;
-
-MPS<std::complex<double>> psi("state.tt");
-MPO<std::complex<double>> rho = MPO<std::complex<double>>::from_mps(psi);
-// rho represents diag(psi) — the diagonal density‑matrix operator
-```
-
-### MPO‑specific operations
-
-```cpp
-// --- Transpose ---
-MPO<std::complex<double>> O_T = O.transpose();  // swap row/col on each physical leg
-
-// --- Extract diagonal (MPO → MPS) ---
-MPS<std::complex<double>> diag_mps = O.diag();  // keep only (0,0) and (1,1) entries
-
-// --- Apply MPO to MPS (three contraction methods) ---
-MPS<std::complex<double>> result;
-
-// 1. zip‑up: efficient direct contraction with SVD truncation
-result = O._mul(psi, "zip-up");
-
-// 2. qrsvd: QR + SVD contraction
-result = O._mul(psi, "qrsvd");
-
-// 3. optimize: variational optimisation with 1‑site or 2‑site sweeps
-result = O._mul(psi, "optimize", /*order=*/2, /*n_sweeps=*/2,
-                /*previous=*/nullptr);
-```
-
-### Arithmetic (inherited from `TT`)
-
-All `TT` arithmetic operators work on `MPO` as well: `+`, `-`, `*scalar`, `/scalar`, `conj()`, `compress_svd(...)`, `save(...)`, etc.
-
----
-
-## Supported scalar types
-
-The library is fully templated on the scalar type `T`. The following are tested:
-
-| Scalar type | Description |
-|---|---|
-| `std::complex<double>` | Standard double precision |
-| `std::complex<float128>` | Boost 128‑bit float (quad precision) |
-| `std::complex<dd_128>` | Double‑double (QD library) |
-
-The xfac SVD uses **Eigen BDCSVD** for `float`, `double`, `complex<float>`, and `complex<double>`, and **Eigen JacobiSVD** for extended‑precision types.
-
----
-
-## Test suite
-
-Test sources mirror the two public-header folders. Paths below are relative to `test/`; existing executable and CTest names are unchanged. Both CTest and `run_test.sh` use the project root as the working directory, so shared data stays under `test/output/`.
-
-| Test source | What it covers |
-|---|---|
-| `TensorQuadOperation/test.cpp` | Standalone tensor-file I/O diagnostic |
-| `TensorQuadOperation/test_Tensor3D.cpp` | `Tensor3D` indexing, slice views, flattening, Armadillo I/O |
-| `TensorQuadOperation/test_Mat_QR.cpp` | QR decomposition correctness |
-| `TensorQuadOperation/test_Mat_SVDDecomp.cpp` | SVD decomposition, reltol truncation, max bond dim |
-| `TensorQuadOperation/test_tt_base.cpp` | `TT` construction, canonicalisation sweeps, arithmetic, conjugation, save/reload |
-| `TensorQuadOperation/test_mps.cpp` | MPS operations, arithmetic, and copy independence |
-| `TensorQuadOperation/test_compress_svd.cpp` | Compression quality across bond‑dimension sweeps |
-| `TensorQuadOperation/test_mpo.cpp` | MPO construction, multiplication, diagonal extraction, transpose, and save/reload |
-| `TensorQuadOperation/test_ttn.cpp` | Tree canonicalisation, compression, scaling, and branch operations |
-| `TensorQuadOperation/test_analytics_construction.cpp` | Analytic MPS construction |
-| `TensorQuadOperation/test_convolution.cpp` | MPS convolution and translation |
-| `QuanticsIntegration/test_indefinite_integral.cpp` | Heaviside MPO for exclusive-prefix integration |
-| `QuanticsIntegration/test_quantics_integrator.cpp` | One-dimensional fitting, range sums, and indefinite integration |
-| `QuanticsIntegration/test_quantics_integrator_kD.cpp` | Tree fitting, rectangular integration, and convolution-based integration comparisons |
-
-Run all tests at once:
-
-```bash
+```sh
 bash run_test.sh
+# Or use CTest:
+ctest --test-dir build --output-on-failure
+# Run the simplex suite on its own:
+./build/tq_test_test_simplex_integration
 ```
 
----
+The runner executes tests in parallel and keeps their console logs beside the sources in `test/TensorQuadOperation/` and `test/QuanticsIntegration/`. Generated tensors, grids, and plots go under the ignored `test/output/` directory. See the [simplex plotting README](test/simplex_plot/README.md) for output locations and how to replot CSVs.
 
 ## Project structure
 
-```
+```text
 TensorQuadOperation/
-├── include/                         # Public include root
-│   ├── TensorQuadOperation/         # TensorQuadOperation namespace
-│   │   ├── tt_base.hpp
-│   │   ├── mps_base.hpp
-│   │   ├── mpo_base.hpp
-│   │   ├── ttn_base.hpp
-│   │   ├── utc.hpp
-│   │   ├── magic_tensor.hpp
-│   │   └── generic_construction.hpp
-│   └── QuanticsIntegration/         # QuanticsIntegration namespace
-│       ├── quantics_integrator.hpp
-│       ├── quantics_integrator_kD.hpp
-│       └── indefinite_integral.hpp
+├── include/
+│   ├── TensorQuadOperation/    # TT, MPS, MPO, TTN, and contraction helpers
+│   └── QuanticsIntegration/   # Grid-aware fitting and integration
 ├── test/
-│   ├── TensorQuadOperation/         # Tensor-operation test sources and logs
-│   │   ├── test.cpp
-│   │   ├── test_Tensor3D.cpp
-│   │   ├── test_Mat_QR.cpp
-│   │   ├── test_Mat_SVDDecomp.cpp
-│   │   ├── test_tt_base.cpp
-│   │   ├── test_mps.cpp
-│   │   ├── test_mpo.cpp
-│   │   ├── test_ttn.cpp
-│   │   ├── test_compress_svd.cpp
-│   │   ├── test_analytics_construction.cpp
-│   │   └── test_convolution.cpp
-│   ├── QuanticsIntegration/         # Integration test sources and logs
-│   │   ├── test_indefinite_integral.cpp
-│   │   ├── test_quantics_integrator.cpp
-│   │   └── test_quantics_integrator_kD.cpp
-│   └── output/                     # Shared generated fixtures (ignored)
-├── extern/               # External dependencies (xfac_quad and Catch2)
-├── build/                # CMake build directory
+│   ├── TensorQuadOperation/    # Tensor-operation tests and runner logs
+│   ├── QuanticsIntegration/   # Fitting and integration tests and runner logs
+│   ├── simplex_plot/          # Plotting script and instructions
+│   └── output/               # Generated fixtures, diagnostic logs, and plots (ignored)
+├── latex_note/                # Convolution and simplex derivations
+├── extern/                    # xfac_quad and Catch2 submodules
+├── build/                     # Generated CMake build directory
 ├── CMakeLists.txt
-├── compile.sh            # CMake configure + build
-├── install_extern.sh     # Init submodules + build extern chain
-└── run_test.sh           # Run all tests in parallel
+├── install_extern.sh          # Initialize and set up dependencies
+├── compile.sh                 # Configure and build
+└── run_test.sh                # Run the test executables
 ```
 
 ## License

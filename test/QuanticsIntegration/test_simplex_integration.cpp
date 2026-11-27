@@ -274,6 +274,48 @@ class Rank30Reference {
     }
 
 public:
+    // Independent reference for the same affine kernel applied to every time.
+    static auto weighted_discrete_reference(int bit_count)
+    {
+        // The summand has degree 29 + 3 in the grid indices. Three inclusive
+        // sums raise the degree to at most 35, so 36 exact samples determine it.
+        constexpr int terms = integrated_degree + 4;
+        const Integer count = Integer(1) << bit_count;
+        const Integer scale_numerator = static_cast<std::uint64_t>(std::ldexp(rank30_scale, scale_bits));
+        const Integer base_denominator = count << scale_bits;
+        std::array<Integer, terms> gap_powers, column, differences;
+        for (int gap = 0; gap < terms; ++gap) {
+            const Integer base = base_denominator + scale_numerator * gap;
+            gap_powers[gap] = 1;
+            for (int r = 0; r < rank30_degree; ++r) gap_powers[gap] *= base;
+        }
+        for (int n = 0; n < terms; ++n) {
+            column[n] = 0;
+            for (int m1 = 0; m1 <= n; ++m1)
+                for (int m2 = 0; m2 <= m1; ++m2)
+                    for (int m3 = 0; m3 <= m2; ++m3)
+                        column[n] += gap_powers[n - m3] * (count + m1) * (count + m2) * (count + m3);
+        }
+        for (int r = 0; r < terms; ++r) {
+            differences[r] = column[0];
+            for (int n = 0; n + r + 1 < terms; ++n)
+                column[n] = column[n + 1] - column[n];
+        }
+        // Denominator: one factor per weight, h^3, and the degree-29 gap power.
+        const int denominator_bits = (rank30_degree + 6) * bit_count + rank30_degree * scale_bits;
+        return [differences = std::move(differences), denominator_bits](util::i128 n) {
+            const Integer index(n);
+            Integer numerator = 0;
+            Integer binomial = 1;
+            for (int r = 0; r < terms && r <= n; ++r) {
+                numerator += differences[r] * binomial;
+                binomial *= index - r;
+                binomial /= r + 1;
+            }
+            return scaled_integer<double>(std::move(numerator), denominator_bits);
+        };
+    }
+
     explicit Rank30Reference(int bit_count) : bits_(bit_count)
     {
         const Integer scale_numerator = static_cast<std::uint64_t>(std::ldexp(rank30_scale, scale_bits));
@@ -338,6 +380,68 @@ Real relative_tolerance()
 
 } // namespace
 
+TEST_CASE("Simplex kernel composition weights the input time", "[simplex][kernel]")
+{
+    using Value = std::complex<double>;
+    using TT = TensorQuadOperation::TT<Value>;
+    using MPS = TensorQuadOperation::MPS<Value>;
+    using MPO = TensorQuadOperation::MPO<Value>;
+    using Core = xfac_quad::Tensor3D<Value>;
+
+    // Ordering 2, two bits, and a three-dimensional open MPO attachment.
+    Core b0(1, 2, 4), b1(2, 3, 4);
+    for (int slot = 0; slot < 4; ++slot) {
+        for (int bond = 0; bond < 2; ++bond) {
+            b0(0, bond, slot) = Value(1 + slot + 2 * bond, slot - bond);
+            for (int attachment = 0; attachment < 3; ++attachment)
+                b1(bond, attachment, slot) = Value(2 + 2 * slot + bond + attachment, attachment - slot);
+        }
+    }
+    // A nonconstant rank-two kernel, also stored LSB first.
+    Core k0(1, 2, 2), k1(2, 1, 2);
+    for (int bit = 0; bit < 2; ++bit) {
+        k0(0, 0, bit) = Value(1 + bit, bit);
+        k0(0, 1, bit) = Value(bit, 1);
+        k1(0, 0, bit) = Value(2 + bit, 0);
+        k1(1, 0, bit) = Value(0, 1 + bit);
+    }
+
+    const int mpo_ordering = GENERATE(0, 1, 2);
+    const int kernel_ordering = GENERATE(0, 1, 2);
+    CAPTURE(mpo_ordering, kernel_ordering);
+    const MPO branch(TT::change_ordering(TT({b0, b1}, 0, -1, -1, 2), mpo_ordering));
+    const MPS kernel(TT::change_ordering(TT({k0, k1}, 0, -1, -1, 2), kernel_ordering));
+    const auto weighted = QuanticsIntegration::simplex_helper::add_kernel_k_step(branch, kernel);
+    REQUIRE(weighted.get_left_phys() == 2);
+    REQUIRE(weighted.get_right_phys() == 2);
+    REQUIRE(weighted.get_ordering() == mpo_ordering);
+    const auto ordered = TT::change_ordering(weighted, 2);
+    const auto& cores = ordered.get_core();
+    REQUIRE(cores.size() == 2);
+    REQUIRE(cores.front().n_rows == 1);
+    REQUIRE(cores.front().n_cols == 4);
+    REQUIRE(cores.back().n_rows == 4);
+    REQUIRE(cores.back().n_cols == 3);
+
+    for (int input = 0; input < 4; ++input) {
+        const int x0 = input & 1, x1 = input >> 1;
+        const Value weight = k0(0, 0, x0) * k1(0, 0, x1) + k0(0, 1, x0) * k1(1, 0, x1);
+        for (int output = 0; output < 4; ++output) {
+            const int slot0 = 2 * (output & 1) + x0, slot1 = 2 * (output >> 1) + x1;
+            for (int attachment = 0; attachment < 3; ++attachment) {
+                CAPTURE(input, output, attachment);
+                const Value original = b0(0, 0, slot0) * b1(0, attachment, slot1)
+                    + b0(0, 1, slot0) * b1(1, attachment, slot1);
+                Value actual{};
+                for (int bond = 0; bond < 4; ++bond)
+                    actual += cores[0](0, bond, slot0) * cores[1](bond, attachment, slot1);
+                // Small integer-valued complex entries give exact products and sums.
+                CHECK(actual == original * weight);
+            }
+        }
+    }
+}
+
 TEMPLATE_TEST_CASE("Simplex integration matches the inclusive grid sum in 1D, 2D, and 3D",
                    "[simplex]", double, dd_128, float128)
 {
@@ -359,7 +463,7 @@ TEMPLATE_TEST_CASE("Simplex integration matches the inclusive grid sum in 1D, 2D
     REQUIRE(values.eval(grid.coord_to_id(gaps)) == Value(Real(polynomial(dimension, 2*h, 7*h, 11*h))));
 
     const auto [integral, time_grid] = TestIntegrator::make_integration_simplex(
-        values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
+        values, grid, /*kernel=*/nullptr, /*kernel_grid=*/{Real(0), Real(1), bits}, /*save_prefix=*/"",
         /*max_bond_dim=*/merge_trucation ? 16 : 0, /*reltol=*/Real(-1),
         /*final_compress=*/false, /*path_logger=*/{}, method, merge_trucation);
     REQUIRE(time_grid.get_a() == Real(0));
@@ -421,7 +525,7 @@ TEMPLATE_TEST_CASE("30-bit simplex integration matches sampled inclusive grid su
                                           std::vector<int>(dimension, bit_count));
     const auto values = make_polynomial_ttn<Value>(dimension, bit_count);
     const auto [integral, time_grid] = Integrator::make_integration_simplex(
-        values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
+        values, grid, /*kernel=*/nullptr, /*kernel_grid=*/{Real(0), Real(1), bit_count}, /*save_prefix=*/"",
         /*max_bond_dim=*/16, /*reltol=*/Real(8) * Eigen::NumTraits<Real>::epsilon(),
         /*final_compress=*/true, /*path_logger=*/{}, method, merge_trucation);
     REQUIRE(time_grid.get_nBits() == bit_count);
@@ -543,14 +647,18 @@ void check_high_resolution_simplex(int dimension, const std::string& method, boo
         const Real error = abs(values.eval(grid.coord_to_id(gaps)) - expected);
         CAPTURE(error);
         if constexpr (FitWithTCI) {
-            // Still report the integration errors if the fitted input misses this check.
-            CHECK(error <= relative_tolerance<Real>() * abs(expected));
+            // Check the input fit separately from the integration error budget.
+            const Real fit_rtol = std::is_same_v<Real, double> ? Real(5e-10)
+                : Real(1000000) * Eigen::NumTraits<Real>::epsilon();
+            const Real fit_budget = fit_rtol * abs(expected);
+            CAPTURE(fit_budget);
+            CHECK(error <= fit_budget);
         } else {
             REQUIRE(error <= relative_tolerance<Real>() * abs(expected));
         }
     }
     const auto [integral, time_grid] = Integrator::make_integration_simplex(
-        values, grid, /*kernels=*/{}, /*kernel_grid=*/grid, /*save_prefix=*/"",
+        values, grid, /*kernel=*/nullptr, /*kernel_grid=*/{Real(0), Real(1), bit_count}, /*save_prefix=*/"",
         /*max_bond_dim=*/Rank30 ? rank30_max_bond_dim : 16,
         /*reltol=*/Rank30 ? rank30_reltol<Real> : Real(8) * Eigen::NumTraits<Real>::epsilon(),
         /*final_compress=*/true, /*path_logger=*/dataset.string() + "_", method, merge_trucation);
@@ -569,7 +677,18 @@ void check_high_resolution_simplex(int dimension, const std::string& method, boo
     REQUIRE(results.size() == times.size());
 
     const Real end_value = reference_at(count - 1, times.back()).first;
-    const Real discrete_budget = relative_tolerance<Real>() * end_value;
+    // Degree-29 double needs more room for contraction error; the fitted cases
+    // also inherit interpolation error from the input TTN.
+    const Real integration_rtol = [] {
+        if constexpr (Rank30 && std::is_same_v<Real, double>)
+            return FitWithTCI ? Real(1.5e-9) : Real(2e-11);
+        else if constexpr (FitWithTCI)
+            return Real(4000000) * Eigen::NumTraits<Real>::epsilon();
+        else
+            return relative_tolerance<Real>();
+    }();
+    const Real discrete_budget = integration_rtol * end_value;
+    CAPTURE(discrete_budget);
     // Each degree-m term differs by replacing t^m with a product of m factors
     // t + (dimension - i)*h. Telescoping those products bounds the combined
     // quadrature error on [0,1) by 32*h for all three test polynomials.
@@ -658,6 +777,57 @@ TEST_CASE("100-bit dd_128 simplex integration of a rank-30 polynomial",
         check_high_resolution_simplex<dd_128, true, true>(3, "zip-up", /*merge_trucation=*/true);
     else
         check_high_resolution_simplex<dd_128, true>(3, "zip-up", /*merge_trucation=*/true);
+}
+
+TEST_CASE("Weighted rank-30 simplex integration matches the ordered grid sum",
+          "[simplex][kernel][rank30]")
+{
+    using Value = std::complex<double>;
+    using Integrator = QuanticsIntegration::QuanticsIntegrator_kD<Value>;
+    using Index = util::i128;
+    const int bit_count = GENERATE(4, 50);
+    const bool merge_trucation = GENERATE(false, true);
+    CAPTURE(bit_count, merge_trucation);
+    const Index count = Index(1) << bit_count;
+    const Integrator::mGrid grid({0, 0, 0}, {1, 1, 1}, {bit_count, bit_count, bit_count});
+    const auto [kernel, kernel_grid] = TensorQuadOperation::analytic_mps_construction::
+        make_polynomial_orderp_mps<Value>(0, 1, bit_count, {Value(1), Value(1)}, /*ordering=*/2);
+    const auto values = make_rank30_polynomial_ttn<Value>(bit_count);
+    REQUIRE(values.get_chi() == rank30);
+    const auto [integral, time_grid] = Integrator::make_integration_simplex(
+        values, grid, &kernel, kernel_grid, /*save_prefix=*/"", rank30_max_bond_dim,
+        rank30_reltol<double>, /*final_compress=*/true, /*path_logger=*/{}, "zip-up", merge_trucation);
+    REQUIRE(time_grid.get_nBits() == bit_count);
+    const double h = time_grid.get_dx();
+    const auto reference = Rank30Reference::weighted_discrete_reference(bit_count);
+    // Allow for double roundoff from the extra kernel contractions on the full-curve scale.
+    const double budget = 3e-11 * reference(count - 1);
+    const int time_count = bit_count == 4 ? 16 : 1000;
+    double max_error = 0;
+    for (int i = 0; i < time_count; ++i) {
+        const Index n = (count - 1) * i / (time_count - 1);
+        const double t = static_cast<double>(n) * h;
+        const double expected = reference(n);
+        CAPTURE(i, t, expected, budget);
+        if (bit_count == 4) {
+            double direct = 0;
+            for (int m1 = 0; m1 <= n; ++m1)
+                for (int m2 = 0; m2 <= m1; ++m2)
+                    for (int m3 = 0; m3 <= m2; ++m3) {
+                        const double u1 = m1 * h, u2 = m2 * h, u3 = m3 * h;
+                        const double gaps = (t - u1) + (u1 - u2) + (u2 - u3);
+                        direct += std::pow(1 + rank30_scale * gaps, rank30_degree)
+                            * (1 + u1) * (1 + u2) * (1 + u3);
+                    }
+            CHECK(std::abs(direct * h * h * h - expected) <= 1e-13 * expected);
+        }
+        const double error = std::abs(Integrator::integrate_simplex(integral, time_grid, t) - Value(expected));
+        max_error = std::max(max_error, error);
+        CHECK(error <= budget);
+    }
+    std::cout << "Weighted rank-30 simplex: " << bit_count << " bits, merge truncation "
+              << (merge_trucation ? "on" : "off") << ", max absolute error=" << max_error
+              << ", budget=" << budget << '\n';
 }
 
 int main(int argc, char* argv[])

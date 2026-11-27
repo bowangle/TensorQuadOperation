@@ -311,10 +311,10 @@ public:
 
     /// given a mState and mGrid
     /// verify condition
-    /// perform SimplexIntegration with or without (kernels,kernel_grid) (optional)
+    /// Apply the same kernel at every integrated time. Pass nullptr for an unweighted integral;
+    /// kernel_grid is ignored in that case.
     /// We thus construct an mps with the tree convention.
     /// convert to MPS and return it with grid (save it with grid if path given)
-    /// Multi-branch weights are not supported yet; a single branch may use a kernel.
     /// The returned MPS already includes quadrature scaling. If save_prefix is
     /// nonempty, save <save_prefix>.tt and the time grid JSON files.
     /// If path_logger is nonempty, log the tree and bond dimensions before and
@@ -326,8 +326,8 @@ public:
     static std::pair<State, Grid> make_integration_simplex(
         const mState& values,
         const mGrid& grid,
-        const std::vector<TensorQuadOperation::MPS<Scalar>>& kernels,
-        const mGrid& kernel_grid,
+        const State* kernel,
+        const Grid& kernel_grid,
         const std::string& save_prefix,
         int max_bond_dim = 0,
         RealScalar reltol = RealScalar(-1),
@@ -337,9 +337,7 @@ public:
         bool merge_trucation = true){
 
             // parameter validation
-            simplex_helper::validation::validation_simplex_parameter(values, grid, kernels, kernel_grid);
-            if (!kernels.empty() && grid.get_dim() > 1)
-                throw std::invalid_argument("QuanticsIntegrator_kD::make_integration_simplex: multi-branch kernels are not supported yet");
+            simplex_helper::validation::validation_simplex_parameter(values, grid, kernel, kernel_grid);
 
             mState working_tree(values.get_TTN_body(), max_bond_dim, reltol, /*w=*/-1);
 
@@ -372,8 +370,7 @@ public:
             // first step(last branch): from (v_1, ..., v_{N-1}, v_N) to (v_1, ..., v_{N-1}, u_{N-1}):
             const int last_branch = grid.get_dim() - 1;
             log_tree("before", "_init_integrate_branch", last_branch);
-            simplex_helper::_init_integrate_branch(
-                working_tree, grid, kernels.empty() ? nullptr : &kernels.back(), method);
+            simplex_helper::_init_integrate_branch(working_tree, grid, kernel, method);
             log_tree("after", "_init_integrate_branch", last_branch);
 
             // other branch: from (v_1, ..., v_{k-1}, v_k, u_k) to (v_1, ..., v_{k-1}, u_{k-1})
@@ -381,7 +378,7 @@ public:
             {
                 log_tree("before", "_integrate_k_branch", branch_k);
                 simplex_helper::_integrate_k_branch(
-                    working_tree, grid, branch_k, /*kernel=*/nullptr, method, simplex_logger.get(), merge_trucation);
+                    working_tree, grid, branch_k, kernel, method, simplex_logger.get(), merge_trucation);
                 log_tree("after", "_integrate_k_branch", branch_k);
             }
                 
